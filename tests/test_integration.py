@@ -294,6 +294,32 @@ def test_live_v007_policy_download_endpoints(client: TreeTopClient):
     assert "permit (" in raw_policies
 
 
+def test_live_v007_request_context_bool_and_long(client: TreeTopClient):
+    base_request = make_request(
+        principal="alice",
+        groups=["admins", "users"],
+        action="create_host",
+        host_id="context.example.com",
+    )
+    request = Request(
+        principal=base_request.principal,
+        action=base_request.action,
+        resource=base_request.resource,
+        id="context-bool-long",
+        context={
+            "approved": True,
+            "retry_count": 3,
+            "verified": ResourceAttribute.new(
+                "false", ResourceAttributeType.BOOLEAN
+            ),
+            "quota": ResourceAttribute.new("7", ResourceAttributeType.NUMBER),
+        },
+    )
+
+    response = client.check(request)
+    assert response.decision == Decision.ALLOW
+
+
 def test_live_check_allow_detailed(
     client: TreeTopClient,
 ):

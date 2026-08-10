@@ -4,7 +4,7 @@ import enum
 import re
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import ClassVar, Generic, TypeAlias, TypeVar, cast, override
+from typing import ClassVar, Generic, Literal, TypeAlias, TypedDict, TypeVar, cast, override
 
 _COLON = re.compile(r":")
 
@@ -174,7 +174,7 @@ Principal = User | Group
 class ResourceAttributeType(str, enum.Enum):
     STRING = "String"
     NUMBER = "Long"
-    BOOLEAN = "Boolean"
+    BOOLEAN = "Bool"
     IP = "Ip"
 
 
@@ -185,12 +185,21 @@ class ResourceAttribute:
 
     def to_api(self) -> JsonObject:
         if self.type == ResourceAttributeType.BOOLEAN:
-            # Convert "true"/"false" strings to actual booleans for the API
-            val = self.value.lower() == "true"
+            normalized = self.value.lower()
+            if normalized not in {"true", "false"}:
+                raise ValueError(
+                    "Boolean resource attribute value must be 'true' or 'false'"
+                )
+            val = normalized == "true"
             return {"type": self.type.value, "value": val}
         elif self.type == ResourceAttributeType.NUMBER:
-            # Convert numeric strings to actual floats for the API
-            val = float(self.value)
+            try:
+                val = int(self.value)
+            except ValueError:
+                raise ValueError(
+                    "Long resource attribute value must be a signed integer"
+                ) from None
+            val = _validate_i64(val, field_name="Long resource attribute value")
             return {"type": self.type.value, "value": val}
 
         return {"type": self.type.value, "value": self.value}
@@ -206,13 +215,106 @@ class ResourceAttribute:
         return cls(type=type, value=value)
 
 
-ContextValue: TypeAlias = ResourceAttribute | JsonValue
+class ContextAttributeObject(TypedDict):
+    type: Literal["String", "Bool", "Long", "Ip", "Set"]
+    value: JsonValue
+
+
+ContextValue: TypeAlias = (
+    ResourceAttribute
+    | str
+    | bool
+    | int
+    | list["ContextValue"]
+    | ContextAttributeObject
+)
+
+_I64_MIN = -(2**63)
+_I64_MAX = 2**63 - 1
+
+
+def _validate_i64(value: int, *, field_name: str) -> int:
+    if not _I64_MIN <= value <= _I64_MAX:
+        raise ValueError(f"{field_name} must fit in a signed 64-bit integer")
+    return value
+
+
+def _context_value_to_api(
+    value: ContextValue | JsonValue, *, field_name: str
+) -> JsonObject:
+    if isinstance(value, ResourceAttribute):
+        return value.to_api()
+    if isinstance(value, str):
+        return {"type": "String", "value": value}
+    if isinstance(value, bool):
+        return {"type": "Bool", "value": value}
+    if isinstance(value, int):
+        return {
+            "type": "Long",
+            "value": _validate_i64(value, field_name=field_name),
+        }
+    if isinstance(value, list):
+        return {
+            "type": "Set",
+            "value": cast(
+                JsonArray,
+                [
+                    _context_value_to_api(item, field_name=f"{field_name}[{index}]")
+                    for index, item in enumerate(value)
+                ],
+            ),
+        }
+    if not isinstance(value, dict):
+        raise ValueError(
+            f"{field_name} must be a string, bool, int, list, or AttrValue object"
+        )
+
+    if set(value) != {"type", "value"}:
+        raise ValueError(
+            f"{field_name} AttrValue object must contain exactly 'type' and 'value'"
+        )
+
+    attr_type = value["type"]
+    attr_value = value["value"]
+    if not isinstance(attr_type, str):
+        raise ValueError(f"{field_name} AttrValue type must be a string")
+    if attr_type in {"String", "Ip"}:
+        if not isinstance(attr_value, str):
+            raise ValueError(f"{field_name} {attr_type} value must be a string")
+        return {"type": attr_type, "value": attr_value}
+    if attr_type == "Bool":
+        if not isinstance(attr_value, bool):
+            raise ValueError(f"{field_name} Bool value must be a bool")
+        return {"type": attr_type, "value": attr_value}
+    if attr_type == "Long":
+        if isinstance(attr_value, bool) or not isinstance(attr_value, int):
+            raise ValueError(f"{field_name} Long value must be an integer")
+        return {
+            "type": attr_type,
+            "value": _validate_i64(attr_value, field_name=f"{field_name} Long value"),
+        }
+    if attr_type == "Set":
+        if not isinstance(attr_value, list):
+            raise ValueError(f"{field_name} Set value must be a list")
+        return {
+            "type": attr_type,
+            "value": cast(
+                JsonArray,
+                [
+                    _context_value_to_api(
+                        item, field_name=f"{field_name}.value[{index}]"
+                    )
+                    for index, item in enumerate(attr_value)
+                ],
+            ),
+        }
+    raise ValueError(f"{field_name} has unsupported AttrValue type {attr_type!r}")
 
 
 def _context_to_api(context: dict[str, ContextValue]) -> JsonObject:
     result: JsonObject = {}
     for key, value in context.items():
-        result[key] = value.to_api() if isinstance(value, ResourceAttribute) else value
+        result[key] = _context_value_to_api(value, field_name=f"context[{key!r}]")
     return result
 
 

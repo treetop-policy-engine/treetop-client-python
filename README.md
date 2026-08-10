@@ -225,11 +225,19 @@ req = Request(
         attrs={"name": ResourceAttribute.new("hostname.example.com")}
     ),
     context={
-        "env": ResourceAttribute.new("prod"),
+        "env": "prod",
+        "approved": True,
+        "retry_count": 3,
+        "roles": ["operator", "reviewer"],
         "ticket": {"type": "String", "value": "CHG-123"},
     },
 )
 ```
+
+Strings, booleans, integers, and lists are encoded as Cedar `String`, `Bool`,
+`Long`, and `Set` values. Typed dictionaries may use `String`, `Bool`, `Long`,
+`Ip`, or `Set`; invalid tags, nulls, and floating-point numbers raise
+`ValueError` before a request is sent.
 
 ## Server Metadata and Uploads
 

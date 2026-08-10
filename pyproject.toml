@@ -1,6 +1,6 @@
 [project]
 name = "treetop-client"
-version = "0.0.6"
+version = "0.0.7"
 description = "Python client library for the Treetop policy server"
 authors = [{ name = "Terje Kvernes", email = "terje@kvernes.no" }]
 license = { text = "MIT" }

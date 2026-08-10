@@ -11,6 +11,8 @@ Python ≥ 3.12, zero runtime deps beyond HTTPX.
 - **Full Async Support**: Async/await support for all API methods
 - **Type Safe**: Fully type-hinted dataclasses for requests and responses
 - **Version Tracking**: Access policy version information (hash and loaded_at timestamp)
+- **v0.0.7 Management API**: Health, version, status, policy, and schema endpoints
+- **Request Context**: Pass request-scoped Cedar context attributes during authorization
 
 ## Basic Usage (Single Request)
 
@@ -33,7 +35,7 @@ attrs["ip"] = ResourceAttribute.new("10.0.0.1", ResourceAttributeType.IP)
 attrs["name"] = ResourceAttribute.new("myhost.example.com", ResourceAttributeType.STRING)
 
 req = Request(
-    principal=User.new("myuser", "mynamespace", ["mygroup"]),
+    principal=User.new("myuser", ["mynamespace"], ["mygroup"]),
     action=Action.new("myaction", ["mynamespace"]),
     resource=Resource.new("Host", id="myhost", attrs=attrs)
 )
@@ -70,7 +72,7 @@ for i in range(3):
     attrs = {"ip": ResourceAttribute.new(f"10.0.0.{i}", ResourceAttributeType.IP)}
     req = Request(
         id=f"request-{i}",  # Optional client-provided correlation ID
-        principal=User.new(f"user{i}", "mynamespace"),
+        principal=User.new(f"user{i}", ["mynamespace"]),
         action=Action.new("view", ["mynamespace"]),
         resource=Resource.new("Host", id=f"host{i}", attrs=attrs)
     )
@@ -113,7 +115,7 @@ attrs["ip"] = ResourceAttribute.new("10.0.0.1", ResourceAttributeType.IP)
 attrs["name"] = ResourceAttribute.new("myhost.example.com", ResourceAttributeType.STRING)
 
 req = Request(
-    principal=User.new("myuser", "mynamespace", ["mygroup"]),
+    principal=User.new("myuser", ["mynamespace"], ["mygroup"]),
     action=Action.new("myaction", ["mynamespace"]),
     resource=Resource.new("Host", id="myhost", attrs=attrs)
 )
@@ -198,7 +200,7 @@ attrs["ip"] = ResourceAttribute.new("10.0.0.1", ResourceAttributeType.IP)
 attrs["name"] = ResourceAttribute.new("myhost.example.com", ResourceAttributeType.STRING)
 
 req = Request(
-    principal=User.new("myuser", "mynamespace", ["mygroup"]),
+    principal=User.new("myuser", ["mynamespace"], ["mygroup"]),
     action=Action.new("myaction", ["mynamespace"]),
     resource=Resource.new("Host", id="myhost", attrs=attrs)
 )
@@ -208,11 +210,54 @@ resp = client.check(req, correlation_id="my-correlation-id")
 response = client.authorize([req1, req2], correlation_id="batch-trace-id")
 ```
 
+## Request Context
+
+Pass request-scoped Cedar context values with the same attribute encoding used for resources:
+
+```python
+req = Request(
+    id="prod-check",
+    principal=User.new("alice", ["DNS"], ["admins"]),
+    action=Action.new("create_host", ["DNS"]),
+    resource=Resource.new(
+        "Host",
+        id="hostname.example.com",
+        attrs={"name": ResourceAttribute.new("hostname.example.com")}
+    ),
+    context={
+        "env": ResourceAttribute.new("prod"),
+        "ticket": {"type": "String", "value": "CHG-123"},
+    },
+)
+```
+
+## Server Metadata and Uploads
+
+```python
+assert client.health()
+
+version = client.version()
+print(version.version, version.core.version, version.policies.hash)
+
+status = client.status()
+print(status.request_context.supported)
+
+policies = client.get_policies()
+raw_policies = client.get_policies(raw=True)
+
+schema = client.get_schema()
+raw_schema = client.get_schema(raw=True)
+
+client.upload_policies("permit (...);", upload_token="server-token")
+client.upload_schema('{"": {}}', upload_token="server-token", as_json=True)
+```
+
 ## Notes
 
 - `User` namespace and groups are optional; they default to the root namespace if not provided
 - `Action` namespace is optional; it defaults to the root namespace if not provided
 - Each `Request` can optionally have an `id` field for client-provided correlation IDs in batch operations
+- Each `Request` can optionally include a `context` object for v0.0.7 request-context evaluation
 
 ## Development
 

@@ -16,7 +16,11 @@ from treetop_client.models import (
     JsonArray,
     JsonObject,
     JsonValue,
+    Metadata,
+    PolicyConfiguration,
     Request,
+    StatusResponse,
+    VersionResponse,
     as_api,
 )
 
@@ -48,11 +52,23 @@ class TreeTopClient:
             verify=verify,
         )
 
-    def _build_headers(self, correlation_id: str | None) -> dict[str, str] | None:
+    def _build_headers(
+        self,
+        correlation_id: str | None = None,
+        upload_token: str | None = None,
+        content_type: str | None = None,
+    ) -> dict[str, str] | None:
         """Build headers for the request, including a correlation ID if provided."""
-        if not correlation_id:
+        headers: dict[str, str] = {}
+        if correlation_id:
+            headers["X-Correlation-ID"] = correlation_id
+        if upload_token:
+            headers["X-Upload-Token"] = upload_token
+        if content_type:
+            headers["Content-Type"] = content_type
+        if not headers:
             return None
-        return {"X-Correlation-ID": correlation_id}
+        return headers
 
     def _sync_post(
         self,
@@ -69,6 +85,41 @@ class TreeTopClient:
             params=params,
         )
 
+    def _sync_get(
+        self,
+        url: str,
+        correlation_id: str | None = None,
+        params: dict[str, str] | None = None,
+    ) -> httpx.Response:
+        return self._sync_client.get(
+            url,
+            headers=self._build_headers(correlation_id),
+            params=params,
+        )
+
+    def _sync_upload(
+        self,
+        url: str,
+        body: str,
+        field_name: str,
+        upload_token: str | None = None,
+        *,
+        as_json: bool = False,
+    ) -> httpx.Response:
+        if as_json:
+            return self._sync_client.post(
+                url,
+                json={field_name: body},
+                headers=self._build_headers(upload_token=upload_token),
+            )
+        return self._sync_client.post(
+            url,
+            content=body,
+            headers=self._build_headers(
+                upload_token=upload_token, content_type="text/plain"
+            ),
+        )
+
     async def _async_post(
         self,
         url: str,
@@ -82,6 +133,194 @@ class TreeTopClient:
             json=json_body,
             headers=self._build_headers(correlation_id),
             params=params,
+        )
+
+    async def _async_get(
+        self,
+        url: str,
+        correlation_id: str | None = None,
+        params: dict[str, str] | None = None,
+    ) -> httpx.Response:
+        return await self._async_client.get(
+            url,
+            headers=self._build_headers(correlation_id),
+            params=params,
+        )
+
+    async def _async_upload(
+        self,
+        url: str,
+        body: str,
+        field_name: str,
+        upload_token: str | None = None,
+        *,
+        as_json: bool = False,
+    ) -> httpx.Response:
+        if as_json:
+            return await self._async_client.post(
+                url,
+                json={field_name: body},
+                headers=self._build_headers(upload_token=upload_token),
+            )
+        return await self._async_client.post(
+            url,
+            content=body,
+            headers=self._build_headers(
+                upload_token=upload_token, content_type="text/plain"
+            ),
+        )
+
+    def health(self) -> bool:
+        """Return True when the server health endpoint responds with a 2xx status."""
+        return self._sync_get(Endpoint.HEALTH.value).raise_for_status().is_success
+
+    async def ahealth(self) -> bool:
+        """Return True when the server health endpoint responds with a 2xx status."""
+        resp = await self._async_get(Endpoint.HEALTH.value)
+        return resp.raise_for_status().is_success
+
+    def version(self) -> VersionResponse:
+        """Fetch server, core, policy, and schema version metadata."""
+        resp = self._sync_get(Endpoint.VERSION.value)
+        return VersionResponse.from_api(cast(JsonObject, resp.raise_for_status().json()))
+
+    async def aversion(self) -> VersionResponse:
+        """Fetch server, core, policy, and schema version metadata."""
+        resp = await self._async_get(Endpoint.VERSION.value)
+        return VersionResponse.from_api(cast(JsonObject, resp.raise_for_status().json()))
+
+    def status(self) -> StatusResponse:
+        """Fetch server status and policy configuration metadata."""
+        resp = self._sync_get(Endpoint.STATUS.value)
+        return StatusResponse.from_api(cast(JsonObject, resp.raise_for_status().json()))
+
+    async def astatus(self) -> StatusResponse:
+        """Fetch server status and policy configuration metadata."""
+        resp = await self._async_get(Endpoint.STATUS.value)
+        return StatusResponse.from_api(cast(JsonObject, resp.raise_for_status().json()))
+
+    def get_policies(self, *, raw: bool = False) -> Metadata | str:
+        """Download policies as metadata JSON or raw Cedar DSL."""
+        resp = self._sync_get(
+            Endpoint.POLICIES.value,
+            params={"format": "raw"} if raw else None,
+        ).raise_for_status()
+        if raw:
+            return resp.text
+        data = cast(JsonObject, resp.json())
+        return Metadata.from_api(cast(JsonObject, data["policies"]))
+
+    async def aget_policies(self, *, raw: bool = False) -> Metadata | str:
+        """Download policies as metadata JSON or raw Cedar DSL."""
+        resp = (
+            await self._async_get(
+                Endpoint.POLICIES.value,
+                params={"format": "raw"} if raw else None,
+            )
+        ).raise_for_status()
+        if raw:
+            return resp.text
+        data = cast(JsonObject, resp.json())
+        return Metadata.from_api(cast(JsonObject, data["policies"]))
+
+    def upload_policies(
+        self,
+        policies: str,
+        *,
+        upload_token: str | None = None,
+        as_json: bool = False,
+    ) -> PolicyConfiguration:
+        """Upload replacement Cedar policies."""
+        resp = self._sync_upload(
+            Endpoint.POLICIES.value,
+            policies,
+            "policies",
+            upload_token,
+            as_json=as_json,
+        )
+        return PolicyConfiguration.from_api(
+            cast(JsonObject, resp.raise_for_status().json())
+        )
+
+    async def aupload_policies(
+        self,
+        policies: str,
+        *,
+        upload_token: str | None = None,
+        as_json: bool = False,
+    ) -> PolicyConfiguration:
+        """Upload replacement Cedar policies."""
+        resp = await self._async_upload(
+            Endpoint.POLICIES.value,
+            policies,
+            "policies",
+            upload_token,
+            as_json=as_json,
+        )
+        return PolicyConfiguration.from_api(
+            cast(JsonObject, resp.raise_for_status().json())
+        )
+
+    def get_schema(self, *, raw: bool = False) -> Metadata | str:
+        """Download schema as metadata JSON or raw Cedar schema JSON."""
+        resp = self._sync_get(
+            Endpoint.SCHEMA.value,
+            params={"format": "raw"} if raw else None,
+        ).raise_for_status()
+        if raw:
+            return resp.text
+        data = cast(JsonObject, resp.json())
+        return Metadata.from_api(cast(JsonObject, data["schema"]))
+
+    async def aget_schema(self, *, raw: bool = False) -> Metadata | str:
+        """Download schema as metadata JSON or raw Cedar schema JSON."""
+        resp = (
+            await self._async_get(
+                Endpoint.SCHEMA.value,
+                params={"format": "raw"} if raw else None,
+            )
+        ).raise_for_status()
+        if raw:
+            return resp.text
+        data = cast(JsonObject, resp.json())
+        return Metadata.from_api(cast(JsonObject, data["schema"]))
+
+    def upload_schema(
+        self,
+        schema: str,
+        *,
+        upload_token: str | None = None,
+        as_json: bool = False,
+    ) -> PolicyConfiguration:
+        """Upload replacement Cedar schema JSON."""
+        resp = self._sync_upload(
+            Endpoint.SCHEMA.value,
+            schema,
+            "schema",
+            upload_token,
+            as_json=as_json,
+        )
+        return PolicyConfiguration.from_api(
+            cast(JsonObject, resp.raise_for_status().json())
+        )
+
+    async def aupload_schema(
+        self,
+        schema: str,
+        *,
+        upload_token: str | None = None,
+        as_json: bool = False,
+    ) -> PolicyConfiguration:
+        """Upload replacement Cedar schema JSON."""
+        resp = await self._async_upload(
+            Endpoint.SCHEMA.value,
+            schema,
+            "schema",
+            upload_token,
+            as_json=as_json,
+        )
+        return PolicyConfiguration.from_api(
+            cast(JsonObject, resp.raise_for_status().json())
         )
 
     def authorize(

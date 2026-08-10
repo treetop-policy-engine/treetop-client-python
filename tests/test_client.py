@@ -1,3 +1,4 @@
+import asyncio
 from datetime import datetime
 
 import httpx
@@ -37,6 +38,237 @@ def make_req(id_suffix: str | None = "1") -> Request:
         ),
         id=f"check-{id_suffix}" if id_suffix else None,
     )
+
+
+def metadata_payload(content: str = "...") -> dict[str, object]:
+    return {
+        "timestamp": "2025-12-19T00:14:38.577289000Z",
+        "sha256": "abc123",
+        "size": len(content),
+        "source": None,
+        "refresh_frequency": None,
+        "entries": 1,
+        "content": content,
+    }
+
+
+def add_health_version_status_responses(httpx_mock: HTTPXMock) -> None:
+    httpx_mock.add_response(
+        method="GET",
+        url="http://localhost:9999/api/v1/health",
+        json={},
+        status_code=200,
+    )
+    httpx_mock.add_response(
+        method="GET",
+        url="http://localhost:9999/api/v1/version",
+        json={
+            "version": "v0.0.7",
+            "core": {"version": "0.3.0", "cedar": "0.11.0"},
+            "policies": {
+                "hash": "policyhash",
+                "loaded_at": "2025-12-19T00:14:38.577289000Z",
+            },
+            "schema": {
+                "hash": "schemahash",
+                "loaded_at": "2025-12-19T00:14:38.577289000Z",
+            },
+        },
+        status_code=200,
+    )
+    httpx_mock.add_response(
+        method="GET",
+        url="http://localhost:9999/api/v1/status",
+        json={
+            "policy_configuration": {
+                "allow_upload": False,
+                "schema_validation_mode": "permissive",
+                "policies": metadata_payload("permit (...);"),
+                "labels": metadata_payload("{}"),
+                "schema": metadata_payload('{"": {}}'),
+            },
+            "parallel_configuration": {
+                "cpu_count": 8,
+                "workers": 8,
+                "rayon_threads": 8,
+                "par_threshold": 8,
+                "allow_parallel": True,
+            },
+            "request_limits": {
+                "max_context_bytes": 16384,
+                "max_context_depth": 8,
+                "max_context_keys": 64,
+            },
+            "request_context": {
+                "supported": True,
+                "schema_backed": False,
+                "fallback_reason": "no_schema",
+            },
+        },
+        status_code=200,
+    )
+
+
+def add_download_responses(httpx_mock: HTTPXMock) -> None:
+    httpx_mock.add_response(
+        method="GET",
+        url="http://localhost:9999/api/v1/policies",
+        json={"policies": metadata_payload("permit (...);")},
+        status_code=200,
+    )
+    httpx_mock.add_response(
+        method="GET",
+        url="http://localhost:9999/api/v1/policies?format=raw",
+        text="permit (...);",
+        status_code=200,
+    )
+    httpx_mock.add_response(
+        method="GET",
+        url="http://localhost:9999/api/v1/schema",
+        json={"schema": metadata_payload('{"": {}}')},
+        status_code=200,
+    )
+    httpx_mock.add_response(
+        method="GET",
+        url="http://localhost:9999/api/v1/schema?format=raw",
+        text='{"": {}}',
+        status_code=200,
+    )
+
+
+def add_upload_responses(httpx_mock: HTTPXMock) -> None:
+    httpx_mock.add_response(
+        method="POST",
+        url="http://localhost:9999/api/v1/policies",
+        match_headers={
+            "Content-Type": "text/plain",
+            "X-Upload-Token": "token",
+        },
+        json={"policies": metadata_payload("permit (...);")},
+        status_code=200,
+    )
+    httpx_mock.add_response(
+        method="POST",
+        url="http://localhost:9999/api/v1/schema",
+        match_headers={"X-Upload-Token": "token"},
+        json={"schema": metadata_payload('{"": {}}')},
+        status_code=200,
+    )
+
+
+def test_health_version_and_status(httpx_mock: HTTPXMock):
+    add_health_version_status_responses(httpx_mock)
+
+    client = TreeTopClient()
+    assert client.health() is True
+    version = client.version()
+    assert version.version == "v0.0.7"
+    assert version.core.cedar == "0.11.0"
+    assert version.schema is not None
+    assert version.schema.hash == "schemahash"
+
+    status = client.status()
+    assert status.policy_configuration.allow_upload is False
+    assert status.policy_configuration.policies is not None
+    assert status.policy_configuration.policies.content == "permit (...);"
+    assert status.request_context.fallback_reason == "no_schema"
+
+
+def test_get_policies_and_schema(httpx_mock: HTTPXMock):
+    add_download_responses(httpx_mock)
+
+    client = TreeTopClient()
+    policies = client.get_policies()
+    assert not isinstance(policies, str)
+    assert policies.content == "permit (...);"
+    assert client.get_policies(raw=True) == "permit (...);"
+
+    schema = client.get_schema()
+    assert not isinstance(schema, str)
+    assert schema.content == '{"": {}}'
+    assert client.get_schema(raw=True) == '{"": {}}'
+
+
+def test_upload_policies_and_schema(httpx_mock: HTTPXMock):
+    add_upload_responses(httpx_mock)
+
+    client = TreeTopClient()
+    policy_config = client.upload_policies("permit (...);", upload_token="token")
+    assert policy_config.policies is not None
+    assert policy_config.policies.content == "permit (...);"
+
+    schema_config = client.upload_schema('{"": {}}', upload_token="token", as_json=True)
+    assert schema_config.schema is not None
+    assert schema_config.schema.content == '{"": {}}'
+
+
+def test_async_health_version_and_status(httpx_mock: HTTPXMock):
+    add_health_version_status_responses(httpx_mock)
+
+    async def exercise() -> None:
+        client = TreeTopClient()
+        try:
+            assert await client.ahealth() is True
+
+            version = await client.aversion()
+            assert version.version == "v0.0.7"
+            assert version.core.cedar == "0.11.0"
+            assert version.schema is not None
+            assert version.schema.hash == "schemahash"
+
+            status = await client.astatus()
+            assert status.policy_configuration.allow_upload is False
+            assert status.policy_configuration.policies is not None
+            assert status.policy_configuration.policies.content == "permit (...);"
+            assert status.request_context.fallback_reason == "no_schema"
+        finally:
+            await client.aclose()
+
+    asyncio.run(exercise())
+
+
+def test_async_get_policies_and_schema(httpx_mock: HTTPXMock):
+    add_download_responses(httpx_mock)
+
+    async def exercise() -> None:
+        client = TreeTopClient()
+        try:
+            policies = await client.aget_policies()
+            assert not isinstance(policies, str)
+            assert policies.content == "permit (...);"
+            assert await client.aget_policies(raw=True) == "permit (...);"
+
+            schema = await client.aget_schema()
+            assert not isinstance(schema, str)
+            assert schema.content == '{"": {}}'
+            assert await client.aget_schema(raw=True) == '{"": {}}'
+        finally:
+            await client.aclose()
+
+    asyncio.run(exercise())
+
+
+def test_async_upload_policies_and_schema(httpx_mock: HTTPXMock):
+    add_upload_responses(httpx_mock)
+
+    async def exercise() -> None:
+        client = TreeTopClient()
+        try:
+            policy_config = await client.aupload_policies(
+                "permit (...);", upload_token="token"
+            )
+            assert policy_config.policies is not None
+            assert policy_config.policies.content == "permit (...);"
+
+            schema_config = await client.aupload_schema(
+                '{"": {}}', upload_token="token", as_json=True
+            )
+            assert schema_config.schema is not None
+            assert schema_config.schema.content == '{"": {}}'
+        finally:
+            await client.aclose()
+
+    asyncio.run(exercise())
 
 
 # Tests for the new batch authorize endpoint

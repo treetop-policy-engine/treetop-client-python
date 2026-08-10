@@ -31,6 +31,12 @@ def _expect_int(value: JsonValue | None, *, field_name: str) -> int:
     raise ValueError(f"{field_name} must be an int, got {type(value).__name__}")
 
 
+def _expect_bool(value: JsonValue | None, *, field_name: str) -> bool:
+    if isinstance(value, bool):
+        return value
+    raise ValueError(f"{field_name} must be a bool, got {type(value).__name__}")
+
+
 def _expect_dict(value: JsonValue | None, *, field_name: str) -> JsonObject:
     if isinstance(value, dict):
         return value
@@ -46,6 +52,11 @@ def _expect_optional_str(value: JsonValue | None, *, field_name: str) -> str | N
 
 
 class Endpoint(enum.Enum):
+    HEALTH = "/api/v1/health"
+    VERSION = "/api/v1/version"
+    STATUS = "/api/v1/status"
+    POLICIES = "/api/v1/policies"
+    SCHEMA = "/api/v1/schema"
     AUTHORIZE = "/api/v1/authorize"
 
 
@@ -195,6 +206,16 @@ class ResourceAttribute:
         return cls(type=type, value=value)
 
 
+ContextValue: TypeAlias = ResourceAttribute | JsonValue
+
+
+def _context_to_api(context: dict[str, ContextValue]) -> JsonObject:
+    result: JsonObject = {}
+    for key, value in context.items():
+        result[key] = value.to_api() if isinstance(value, ResourceAttribute) else value
+    return result
+
+
 @dataclass(slots=True, frozen=True)
 class Resource:
     kind: str
@@ -225,6 +246,7 @@ class Request:
     action: Action
     resource: Resource
     id: str | None = None
+    context: dict[str, ContextValue] | None = None
 
     def to_api(self) -> JsonObject:
         # Principal: User already returns {"User": {...}}.
@@ -240,6 +262,8 @@ class Request:
         }
         if self.id is not None:
             result["id"] = self.id
+        if self.context is not None:
+            result["context"] = _context_to_api(self.context)
         return result
 
 
@@ -303,6 +327,209 @@ class PolicyVersion:
         return cls(
             hash=hash_value,
             loaded_at=datetime.fromisoformat(loaded_at_value.replace("Z", "+00:00")),
+        )
+
+
+@dataclass(slots=True, frozen=True)
+class CoreVersion:
+    version: str
+    cedar: str
+
+    @classmethod
+    def from_api(cls, data: JsonObject) -> CoreVersion:
+        return cls(
+            version=_expect_str(data.get("version"), field_name="core version"),
+            cedar=_expect_str(data.get("cedar"), field_name="core cedar"),
+        )
+
+
+@dataclass(slots=True, frozen=True)
+class VersionResponse:
+    version: str
+    core: CoreVersion
+    policies: PolicyVersion
+    schema: PolicyVersion | None = None
+
+    @classmethod
+    def from_api(cls, data: JsonObject) -> VersionResponse:
+        schema_blob = data.get("schema")
+        return cls(
+            version=_expect_str(data.get("version"), field_name="version"),
+            core=CoreVersion.from_api(_expect_dict(data.get("core"), field_name="core")),
+            policies=PolicyVersion.from_api(
+                _expect_dict(data.get("policies"), field_name="policies")
+            ),
+            schema=PolicyVersion.from_api(
+                _expect_dict(schema_blob, field_name="schema")
+            )
+            if schema_blob is not None
+            else None,
+        )
+
+
+@dataclass(slots=True, frozen=True)
+class Metadata:
+    timestamp: datetime
+    sha256: str
+    size: int
+    source: JsonObject | None
+    refresh_frequency: int | None
+    entries: int
+    content: str | None = None
+
+    @classmethod
+    def from_api(cls, data: JsonObject) -> Metadata:
+        source_blob = data.get("source")
+        refresh_frequency = data.get("refresh_frequency")
+        return cls(
+            timestamp=datetime.fromisoformat(
+                _expect_str(data.get("timestamp"), field_name="timestamp").replace(
+                    "Z", "+00:00"
+                )
+            ),
+            sha256=_expect_str(data.get("sha256"), field_name="sha256"),
+            size=_expect_int(data.get("size"), field_name="size"),
+            source=_expect_dict(source_blob, field_name="source")
+            if source_blob is not None
+            else None,
+            refresh_frequency=_expect_int(
+                refresh_frequency, field_name="refresh_frequency"
+            )
+            if refresh_frequency is not None
+            else None,
+            entries=_expect_int(data.get("entries"), field_name="entries"),
+            content=_expect_optional_str(data.get("content"), field_name="content"),
+        )
+
+
+@dataclass(slots=True, frozen=True)
+class PolicyConfiguration:
+    allow_upload: bool | None
+    schema_validation_mode: str | None
+    policies: Metadata | None
+    labels: Metadata | None
+    schema: Metadata | None
+
+    @classmethod
+    def from_api(cls, data: JsonObject) -> PolicyConfiguration:
+        allow_upload = data.get("allow_upload")
+        schema_validation_mode = data.get("schema_validation_mode")
+        policies = data.get("policies")
+        labels = data.get("labels")
+        schema = data.get("schema")
+        return cls(
+            allow_upload=_expect_bool(allow_upload, field_name="allow_upload")
+            if allow_upload is not None
+            else None,
+            schema_validation_mode=_expect_str(
+                schema_validation_mode, field_name="schema_validation_mode"
+            )
+            if schema_validation_mode is not None
+            else None,
+            policies=Metadata.from_api(_expect_dict(policies, field_name="policies"))
+            if policies is not None
+            else None,
+            labels=Metadata.from_api(_expect_dict(labels, field_name="labels"))
+            if labels is not None
+            else None,
+            schema=Metadata.from_api(_expect_dict(schema, field_name="schema"))
+            if schema is not None
+            else None,
+        )
+
+
+@dataclass(slots=True, frozen=True)
+class ParallelConfiguration:
+    cpu_count: int
+    workers: int
+    rayon_threads: int
+    par_threshold: int
+    allow_parallel: bool
+
+    @classmethod
+    def from_api(cls, data: JsonObject) -> ParallelConfiguration:
+        return cls(
+            cpu_count=_expect_int(data.get("cpu_count"), field_name="cpu_count"),
+            workers=_expect_int(data.get("workers"), field_name="workers"),
+            rayon_threads=_expect_int(
+                data.get("rayon_threads"), field_name="rayon_threads"
+            ),
+            par_threshold=_expect_int(
+                data.get("par_threshold"), field_name="par_threshold"
+            ),
+            allow_parallel=_expect_bool(
+                data.get("allow_parallel"), field_name="allow_parallel"
+            ),
+        )
+
+
+@dataclass(slots=True, frozen=True)
+class RequestLimits:
+    max_context_bytes: int
+    max_context_depth: int
+    max_context_keys: int
+
+    @classmethod
+    def from_api(cls, data: JsonObject) -> RequestLimits:
+        return cls(
+            max_context_bytes=_expect_int(
+                data.get("max_context_bytes"), field_name="max_context_bytes"
+            ),
+            max_context_depth=_expect_int(
+                data.get("max_context_depth"), field_name="max_context_depth"
+            ),
+            max_context_keys=_expect_int(
+                data.get("max_context_keys"), field_name="max_context_keys"
+            ),
+        )
+
+
+@dataclass(slots=True, frozen=True)
+class RequestContextStatus:
+    supported: bool
+    schema_backed: bool
+    fallback_reason: str | None
+
+    @classmethod
+    def from_api(cls, data: JsonObject) -> RequestContextStatus:
+        return cls(
+            supported=_expect_bool(data.get("supported"), field_name="supported"),
+            schema_backed=_expect_bool(
+                data.get("schema_backed"), field_name="schema_backed"
+            ),
+            fallback_reason=_expect_optional_str(
+                data.get("fallback_reason"), field_name="fallback_reason"
+            ),
+        )
+
+
+@dataclass(slots=True, frozen=True)
+class StatusResponse:
+    policy_configuration: PolicyConfiguration
+    parallel_configuration: ParallelConfiguration
+    request_limits: RequestLimits
+    request_context: RequestContextStatus
+
+    @classmethod
+    def from_api(cls, data: JsonObject) -> StatusResponse:
+        return cls(
+            policy_configuration=PolicyConfiguration.from_api(
+                _expect_dict(
+                    data.get("policy_configuration"), field_name="policy_configuration"
+                )
+            ),
+            parallel_configuration=ParallelConfiguration.from_api(
+                _expect_dict(
+                    data.get("parallel_configuration"),
+                    field_name="parallel_configuration",
+                )
+            ),
+            request_limits=RequestLimits.from_api(
+                _expect_dict(data.get("request_limits"), field_name="request_limits")
+            ),
+            request_context=RequestContextStatus.from_api(
+                _expect_dict(data.get("request_context"), field_name="request_context")
+            ),
         )
 
 

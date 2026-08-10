@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.7] - 2026-07-05
+
+### Added
+
+- Support for Treetop REST v0.0.7:
+  - Request-scoped authorization `context` on `Request`
+  - `health()` / `ahealth()`
+  - `version()` / `aversion()`
+  - `status()` / `astatus()`
+  - `get_policies()` / `aget_policies()`
+  - `upload_policies()` / `aupload_policies()`
+  - `get_schema()` / `aget_schema()`
+  - `upload_schema()` / `aupload_schema()`
+- Typed models for server version, policy metadata, status, request limits, and request context status.
+
 ## [0.0.6] - 2026-01-30
 
 ### Added

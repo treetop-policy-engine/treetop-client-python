@@ -4,12 +4,15 @@ import pytest
 
 from treetop_client.models import (
     Action,
+    Decision,
     Group,
     JsonObject,
     QualifiedId,
     Request,
     Resource,
     ResourceAttribute,
+    ResourceAttributeType,
+    AuthorizedResponseDetailed,
     User,
 )
 
@@ -100,3 +103,43 @@ def test_group_new():
 def test_action_new():
     a = Action.new(id="edit", namespace=["App"])
     assert a.to_api() == {"id": "edit", "namespace": ["App"]}
+
+
+def test_request_context_serializes_resource_attributes():
+    req = Request(
+        principal=User.new("alice"),
+        action=Action.new("view"),
+        resource=Resource.new(
+            "Photo",
+            "1",
+            attrs={"id": ResourceAttribute.new("1")},
+        ),
+        context={
+            "env": ResourceAttribute.new("prod"),
+            "retry": ResourceAttribute.new("3", ResourceAttributeType.NUMBER),
+            "raw": {"type": "Boolean", "value": True},
+        },
+    )
+
+    assert req.to_api()["context"] == {
+        "env": {"type": "String", "value": "prod"},
+        "retry": {"type": "Long", "value": 3.0},
+        "raw": {"type": "Boolean", "value": True},
+    }
+
+
+def test_detailed_response_current_full_shape():
+    resp = AuthorizedResponseDetailed.from_api(
+        {
+            "decision": "Allow",
+            "policy": [{"literal": "permit (...);", "json": {"effect": "permit"}}],
+            "version": {
+                "hash": "abc123",
+                "loaded_at": "2025-12-19T00:14:38.577289000Z",
+            },
+        }
+    )
+
+    assert resp.decision == Decision.ALLOW
+    assert resp.version_hash() == "abc123"
+    assert resp.policies[0].literal == "permit (...);"

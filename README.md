@@ -1,5 +1,7 @@
 # TreeTop Client
 
+[![CodSpeed](https://img.shields.io/endpoint?url=https://codspeed.io/badge.json)](https://app.codspeed.io/terjekv/treetop-client-python?utm_source=badge)
+
 Dataclass-based HTTPX client for the [Treetop REST API](https://github.com/terjekv/treetop-rest).
 Python ≥ 3.12, zero runtime deps beyond HTTPX.
 
@@ -286,4 +288,19 @@ uv add package-name
 
 # Add a dev dependency
 uv add --dev package-name
+```
+
+### Benchmarks
+
+Performance benchmarks live in `benchmarks/` and are measured continuously by
+[CodSpeed](https://codspeed.io) on every push and pull request. They cover request
+serialization, response parsing and the client code path against a mocked HTTP
+transport, so no server is required.
+
+```bash
+# Run the benchmarks as plain tests (fast smoke check)
+uv run pytest benchmarks
+
+# Measure them locally with the CodSpeed CLI
+codspeed run --mode simulation -- uv run pytest benchmarks --codspeed
 ```

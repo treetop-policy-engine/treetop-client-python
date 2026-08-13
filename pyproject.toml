@@ -14,6 +14,7 @@ dev = [
     "pytest-httpx>=0.36.0",
     "pyright>=1.0.0",
     "basedpyright>=1.0.0",
+    "pytest-codspeed>=5.0.3",
 ]
 
 [build-system]
@@ -26,6 +27,8 @@ packages = ["src/treetop_client"]
 [tool.pytest.ini_options]
 markers = ["integration: run tests against a live policy-server (Docker)"]
 addopts = "-m 'not integration'"
+# Benchmarks live in benchmarks/ and are run explicitly (see .github/workflows/codspeed.yml)
+testpaths = ["tests"]
 
 [project.urls]
 Homepage = "https://github.com/terjekv/treetop-client-python"

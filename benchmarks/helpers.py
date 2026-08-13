@@ -96,7 +96,11 @@ def brief_batch_payload(count: int) -> JsonObject:
             "index": i,
             "id": f"req-{i}",
             "status": "success",
-            "result": {"decision": "Allow" if i % 3 else "Deny"},
+            "result": {
+                "decision": "Allow" if i % 3 else "Deny",
+                "policy_id": "DNS.admins_policy" if i % 3 else "",
+                "version": version_payload(),
+            },
         }
         for i in range(count)
     ]
@@ -133,6 +137,23 @@ def detailed_batch_payload(count: int) -> JsonObject:
         "version": version_payload(),
         "successful": count,
         "failed": 0,
+    }
+
+
+def user_policies_payload(count: int = 25) -> JsonObject:
+    return {
+        "user": "alice",
+        "policies": [policy_payload(i)["json"] for i in range(count)],
+        "matches": cast(
+            JsonArray,
+            [
+                {
+                    "cedar_id": f"policy{i}",
+                    "reasons": ["PrincipalIn", "ActionEq", "ResourceAny"],
+                }
+                for i in range(count)
+            ],
+        ),
     }
 
 

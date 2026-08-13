@@ -1,6 +1,6 @@
 [project]
 name = "treetop-client"
-version = "0.0.7"
+version = "0.0.11"
 description = "Python client library for the Treetop policy server"
 authors = [{ name = "Terje Kvernes", email = "terje@kvernes.no" }]
 license = { text = "MIT" }
@@ -10,25 +10,40 @@ dependencies = ["httpx>=0.28.1,<0.29.0"]
 
 [project.optional-dependencies]
 dev = [
-    "pytest>=9.0.0",
-    "pytest-httpx>=0.36.0",
-    "pyright>=1.0.0",
-    "basedpyright>=1.0.0",
+    "basedpyright>=1.39.9",
+    "pyright>=1.1.411",
+    "pytest>=9.1.1",
     "pytest-codspeed>=5.0.3",
+    "pytest-httpx>=0.36.2",
 ]
 
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling>=1.32.0"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/treetop_client"]
 
+[tool.hatch.build.targets.sdist]
+include = [
+    "/Changelog.md",
+    "/LICENSE",
+    "/README.md",
+    "/pyproject.toml",
+    "/src",
+]
+
 [tool.pytest.ini_options]
-markers = ["integration: run tests against a live policy-server (Docker)"]
-addopts = "-m 'not integration'"
-# Benchmarks live in benchmarks/ and are run explicitly (see .github/workflows/codspeed.yml)
-testpaths = ["tests"]
+markers = [
+    "benchmark: CPU performance regression benchmark",
+    "integration: run tests against a live policy-server (Docker)",
+]
+addopts = "-m 'not integration and not benchmark'"
+
+[tool.pyright]
+venvPath = "."
+venv = ".venv"
+pythonVersion = "3.12"
 
 [project.urls]
 Homepage = "https://github.com/terjekv/treetop-client-python"

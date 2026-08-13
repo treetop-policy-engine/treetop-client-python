@@ -13,7 +13,7 @@ Python ≥ 3.12, zero runtime deps beyond HTTPX.
 - **Full Async Support**: Async/await support for all API methods
 - **Type Safe**: Fully type-hinted dataclasses for requests and responses
 - **Version Tracking**: Access policy version information (hash and loaded_at timestamp)
-- **v0.0.7 Management API**: Health, version, status, policy, and schema endpoints
+- **Treetop REST v0.0.11**: Operational probes, generated OpenAPI, metrics, status, policy, and schema endpoints
 - **Request Context**: Pass request-scoped Cedar context attributes during authorization
 
 ## Basic Usage (Single Request)
@@ -251,9 +251,22 @@ print(version.version, version.core.version, version.policies.hash)
 
 status = client.status()
 print(status.request_context.supported)
+print(status.request_limits.max_batch_size)
+
+# v0.0.11 operational and discovery endpoints
+assert client.livez()
+assert client.readyz()
+openapi = client.openapi()
+print(openapi["info"])
+print(client.metrics())
 
 policies = client.get_policies()
 raw_policies = client.get_policies(raw=True)
+
+user_policies = client.list_policies(
+    "alice", groups=["admins"], namespaces=["DNS"]
+)
+raw_user_policies = client.list_policies("alice", raw=True)
 
 schema = client.get_schema()
 raw_schema = client.get_schema(raw=True)
@@ -267,7 +280,8 @@ client.upload_schema('{"": {}}', upload_token="server-token", as_json=True)
 - `User` namespace and groups are optional; they default to the root namespace if not provided
 - `Action` namespace is optional; it defaults to the root namespace if not provided
 - Each `Request` can optionally have an `id` field for client-provided correlation IDs in batch operations
-- Each `Request` can optionally include a `context` object for v0.0.7 request-context evaluation
+- Each `Request` can optionally include a `context` object for request-context evaluation
+- Resource attributes are optional, and namespaced resource kinds such as `Database::Table` are supported
 
 ## Development
 
@@ -283,6 +297,12 @@ uv run pytest
 # Run integration tests (requires Docker & Docker Compose)
 uv run pytest -m integration
 
+# Or test a server already listening on http://localhost:10101
+TREETOP_INTEGRATION_EXTERNAL_SERVER=1 uv run pytest -m integration
+
+# Exercise the performance benchmarks locally
+uv run pytest benchmarks --codspeed -m benchmark
+
 # Add a new dependency
 uv add package-name
 
@@ -290,17 +310,9 @@ uv add package-name
 uv add --dev package-name
 ```
 
-### Benchmarks
-
-Performance benchmarks live in `benchmarks/` and are measured continuously by
-[CodSpeed](https://codspeed.io) on every push and pull request. They cover request
-serialization, response parsing and the client code path against a mocked HTTP
-transport, so no server is required.
-
-```bash
-# Run the benchmarks as plain tests (fast smoke check)
-uv run pytest benchmarks
-
-# Measure them locally with the CodSpeed CLI
-codspeed run --mode simulation -- uv run pytest benchmarks --codspeed
-```
+CPU-sensitive request serialization and response parsing are tracked in CI with
+[CodSpeed](https://codspeed.io/). Its simulated-CPU mode is the closest Python
+equivalent to instruction-counted `iai-callgrind`: pull requests get stable
+regression comparisons, history, and profiles without relying on noisy hosted-runner
+wall time. Import the repository into CodSpeed once to enable result uploads; the
+workflow authenticates with GitHub OIDC and does not require a long-lived token.

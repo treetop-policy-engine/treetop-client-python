@@ -8,7 +8,7 @@ services:
     command: ["/data", "--port", "18999"]
 
   integration-test-treetop-server:
-    image: ${TREETOP_REST_IMAGE:-terjekv/treetop-rest:v0.0.7}
+    image: ${TREETOP_REST_IMAGE:-terjekv/treetop-rest:v0.0.11}
     container_name: integration-test-treetop-server
     pull_policy: "always"
     ports:

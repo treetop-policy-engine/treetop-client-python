@@ -43,9 +43,12 @@ def test_qualified_id_and_group():
     }
 
 
-def test_resource_empty_attrs():
-    with pytest.raises(ValueError):
-        _ = Resource(kind="Photo", id="1", attrs={})
+def test_resource_optional_attrs_and_namespaced_kind():
+    assert Resource.new("Database::Table", "users").to_api() == {
+        "kind": "Database::Table",
+        "id": "users",
+        "attrs": {},
+    }
 
 
 def test_user_no_colon():

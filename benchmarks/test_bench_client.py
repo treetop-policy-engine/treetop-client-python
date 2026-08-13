@@ -17,6 +17,7 @@ from benchmarks.helpers import (
     make_requests,
     metadata_payload,
     status_payload,
+    user_policies_payload,
     version_response_payload,
 )
 from pytest_codspeed import BenchmarkFixture
@@ -27,10 +28,13 @@ from treetop_client.models import Decision
 
 BASE_URL = "http://treetop.test"
 
-pytestmark = pytest.mark.httpx_mock(
-    can_send_already_matched_responses=True,
-    assert_all_responses_were_requested=False,
-)
+pytestmark = [
+    pytest.mark.benchmark,
+    pytest.mark.httpx_mock(
+        can_send_already_matched_responses=True,
+        assert_all_responses_were_requested=False,
+    ),
+]
 
 
 @pytest.fixture
@@ -143,6 +147,25 @@ def test_get_policies(
     )
     metadata = benchmark(client.get_policies)
     assert metadata is not None
+
+
+def test_list_policies(
+    benchmark: BenchmarkFixture,
+    httpx_mock: HTTPXMock,
+    client: TreeTopClient,
+):
+    httpx_mock.add_response(
+        method="GET",
+        url=f"{BASE_URL}/api/v1/policies/alice?groups=admins&groups=operators&namespaces=DNS",
+        json=user_policies_payload(25),
+    )
+    policies = benchmark(
+        client.list_policies,
+        "alice",
+        groups=["admins", "operators"],
+        namespaces=["DNS"],
+    )
+    assert not isinstance(policies, str)
 
 
 def test_upload_policies(

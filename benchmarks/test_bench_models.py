@@ -10,6 +10,7 @@ from benchmarks.helpers import (
     make_requests,
     metadata_payload,
     status_payload,
+    user_policies_payload,
     version_response_payload,
 )
 from pytest_codspeed import BenchmarkFixture
@@ -20,9 +21,12 @@ from treetop_client.models import (
     Metadata,
     StatusResponse,
     User,
+    UserPolicies,
     VersionResponse,
     as_api,
 )
+
+pytestmark = pytest.mark.benchmark
 
 
 def test_request_to_api(benchmark: BenchmarkFixture):
@@ -100,6 +104,12 @@ def test_version_response_from_api(benchmark: BenchmarkFixture):
     payload = version_response_payload()
     version = benchmark(VersionResponse.from_api, payload)
     assert version.version == "v0.0.7"
+
+
+def test_user_policies_from_api(benchmark: BenchmarkFixture):
+    payload = user_policies_payload(25)
+    policies = benchmark(UserPolicies.from_api, payload)
+    assert len(policies.matches) == 25
 
 
 def test_metadata_from_api(benchmark: BenchmarkFixture):

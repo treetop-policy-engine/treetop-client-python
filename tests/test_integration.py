@@ -1,3 +1,4 @@
+import os
 import re
 import subprocess
 import time
@@ -137,6 +138,10 @@ def docker_compose_up_down(tmp_path_factory: pytest.TempPathFactory):
     Spin up the server via docker-compose.integration.yml before tests,
     tear it down afterwards.
     """
+    if os.environ.get("TREETOP_INTEGRATION_EXTERNAL_SERVER"):
+        yield
+        return
+
     # bring up
     _ = tmp_path_factory
     _ = subprocess.check_call(
@@ -167,6 +172,27 @@ def docker_compose_up_down(tmp_path_factory: pytest.TempPathFactory):
     _ = subprocess.call(
         ["docker", "compose", "-f", "docker-compose.integration.yml", "down"]
     )
+
+
+def test_v0_0_11_server_surfaces(client: TreeTopClient):
+    assert client.livez()
+    assert client.readyz()
+    assert client.openapi()["openapi"] == "3.1.0"
+    assert client.openapi()["info"] == {
+        "title": "treetop-rest",
+        "description": "REST server for the Treetop policy management framework",
+        "license": {"name": "MIT", "identifier": "MIT"},
+        "version": "0.0.11",
+    }
+    assert client.status().request_limits.max_batch_size is not None
+    assert "treetop_build_info" in client.metrics()
+
+    policies = client.list_policies(
+        "alice", groups=["admins"], namespaces=NAMESPACE
+    )
+    assert not isinstance(policies, str)
+    assert policies.user == "alice"
+    assert policies.matches
 
 
 @pytest.mark.parametrize(
@@ -257,11 +283,11 @@ def test_live_check_allows_super_bare(
     assert resp.decision == Decision.ALLOW
 
 
-def test_live_v007_metadata_endpoints(client: TreeTopClient):
+def test_live_v0011_metadata_endpoints(client: TreeTopClient):
     assert client.health() is True
 
     version = client.version()
-    assert version.version == "v0.0.7"
+    assert version.version == "v0.0.11"
     assert version.core.version
     assert version.core.cedar
     assert version.policies.hash
@@ -281,7 +307,7 @@ def test_live_v007_metadata_endpoints(client: TreeTopClient):
     assert status.request_context.supported is True
 
 
-def test_live_v007_policy_download_endpoints(client: TreeTopClient):
+def test_live_v0011_policy_download_endpoints(client: TreeTopClient):
     policies = client.get_policies()
     assert not isinstance(policies, str)
     assert policies.entries > 0
@@ -294,7 +320,7 @@ def test_live_v007_policy_download_endpoints(client: TreeTopClient):
     assert "permit (" in raw_policies
 
 
-def test_live_v007_request_context_bool_and_long(client: TreeTopClient):
+def test_live_v0011_request_context_bool_and_long(client: TreeTopClient):
     base_request = make_request(
         principal="alice",
         groups=["admins", "users"],

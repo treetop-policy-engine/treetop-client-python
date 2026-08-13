@@ -3,6 +3,7 @@ from __future__ import annotations
 import contextlib
 from collections.abc import Sequence
 from typing import Final, cast
+from urllib.parse import quote
 
 import httpx
 
@@ -20,6 +21,7 @@ from treetop_client.models import (
     PolicyConfiguration,
     Request,
     StatusResponse,
+    UserPolicies,
     VersionResponse,
     as_api,
 )
@@ -75,7 +77,7 @@ class TreeTopClient:
         url: str,
         json_body: JsonObject,
         correlation_id: str | None = None,
-        params: dict[str, str] | None = None,
+        params: dict[str, str] | httpx.QueryParams | None = None,
     ) -> httpx.Response:
         """Synchronous POST request to the given URL with JSON body and optional correlation ID."""
         return self._sync_client.post(
@@ -89,7 +91,7 @@ class TreeTopClient:
         self,
         url: str,
         correlation_id: str | None = None,
-        params: dict[str, str] | None = None,
+        params: dict[str, str] | httpx.QueryParams | None = None,
     ) -> httpx.Response:
         return self._sync_client.get(
             url,
@@ -125,7 +127,7 @@ class TreeTopClient:
         url: str,
         json_body: JsonObject,
         correlation_id: str | None = None,
-        params: dict[str, str] | None = None,
+        params: dict[str, str] | httpx.QueryParams | None = None,
     ) -> httpx.Response:
         """Asynchronous POST request to the given URL with JSON body and optional correlation ID."""
         return await self._async_client.post(
@@ -139,7 +141,7 @@ class TreeTopClient:
         self,
         url: str,
         correlation_id: str | None = None,
-        params: dict[str, str] | None = None,
+        params: dict[str, str] | httpx.QueryParams | None = None,
     ) -> httpx.Response:
         return await self._async_client.get(
             url,
@@ -169,6 +171,48 @@ class TreeTopClient:
                 upload_token=upload_token, content_type="text/plain"
             ),
         )
+
+    def livez(self) -> bool:
+        """Return True when the v0.0.11 liveness probe succeeds."""
+        return self._sync_get(Endpoint.LIVEZ.value).raise_for_status().is_success
+
+    async def alivez(self) -> bool:
+        """Return True when the v0.0.11 liveness probe succeeds."""
+        resp = await self._async_get(Endpoint.LIVEZ.value)
+        return resp.raise_for_status().is_success
+
+    def readyz(self) -> bool:
+        """Return readiness, treating the probe's expected 503 as False."""
+        resp = self._sync_get(Endpoint.READYZ.value)
+        if resp.status_code == 503:
+            return False
+        return resp.raise_for_status().is_success
+
+    async def areadyz(self) -> bool:
+        """Return readiness, treating the probe's expected 503 as False."""
+        resp = await self._async_get(Endpoint.READYZ.value)
+        if resp.status_code == 503:
+            return False
+        return resp.raise_for_status().is_success
+
+    def openapi(self) -> JsonObject:
+        """Fetch the server's canonical generated OpenAPI document."""
+        resp = self._sync_get(Endpoint.OPENAPI.value)
+        return cast(JsonObject, resp.raise_for_status().json())
+
+    async def aopenapi(self) -> JsonObject:
+        """Fetch the server's canonical generated OpenAPI document."""
+        resp = await self._async_get(Endpoint.OPENAPI.value)
+        return cast(JsonObject, resp.raise_for_status().json())
+
+    def metrics(self) -> str:
+        """Fetch the server's Prometheus metrics exposition."""
+        return self._sync_get(Endpoint.METRICS.value).raise_for_status().text
+
+    async def ametrics(self) -> str:
+        """Fetch the server's Prometheus metrics exposition."""
+        resp = await self._async_get(Endpoint.METRICS.value)
+        return resp.raise_for_status().text
 
     def health(self) -> bool:
         """Return True when the server health endpoint responds with a 2xx status."""
@@ -322,6 +366,56 @@ class TreeTopClient:
         return PolicyConfiguration.from_api(
             cast(JsonObject, resp.raise_for_status().json())
         )
+
+    def list_policies(
+        self,
+        user: str,
+        *,
+        groups: Sequence[str] = (),
+        namespaces: Sequence[str] = (),
+        raw: bool = False,
+    ) -> UserPolicies | str:
+        """List policies matching a user, optionally as raw Cedar DSL."""
+        params = httpx.QueryParams()
+        for group in groups:
+            params = params.add("groups", group)
+        for namespace in namespaces:
+            params = params.add("namespaces", namespace)
+        if raw:
+            params = params.add("format", "raw")
+        resp = self._sync_get(
+            f"{Endpoint.POLICIES.value}/{quote(user, safe='')}",
+            params=params if params else None,
+        ).raise_for_status()
+        if raw:
+            return resp.text
+        return UserPolicies.from_api(cast(JsonObject, resp.json()))
+
+    async def alist_policies(
+        self,
+        user: str,
+        *,
+        groups: Sequence[str] = (),
+        namespaces: Sequence[str] = (),
+        raw: bool = False,
+    ) -> UserPolicies | str:
+        """List policies matching a user, optionally as raw Cedar DSL."""
+        params = httpx.QueryParams()
+        for group in groups:
+            params = params.add("groups", group)
+        for namespace in namespaces:
+            params = params.add("namespaces", namespace)
+        if raw:
+            params = params.add("format", "raw")
+        resp = (
+            await self._async_get(
+                f"{Endpoint.POLICIES.value}/{quote(user, safe='')}",
+                params=params if params else None,
+            )
+        ).raise_for_status()
+        if raw:
+            return resp.text
+        return UserPolicies.from_api(cast(JsonObject, resp.json()))
 
     def authorize(
         self,

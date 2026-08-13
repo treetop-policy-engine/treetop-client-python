@@ -15,23 +15,31 @@ jobs:
 
     steps:
       - name: Check out code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v7.0.1
 
       - name: Set up Python 3.12
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v7.0.0
         with:
           python-version: "3.12"
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v5
+        uses: astral-sh/setup-uv@v10.0.0
+        with:
+          version: "latest-known"
           
       - name: Install dependencies
-        run: uv sync --extra dev
+        run: uv sync --locked --extra dev
+
+      - name: Run type checks
+        if: matrix.integration == false
+        run: |
+          uv run pyright
+          uv run basedpyright
           
       - name: Run pytest
         run: |
           if [ "${{ matrix.integration }}" = "true" ]; then
-            export TREETOP_REST_IMAGE=terjekv/treetop-rest:v0.0.7
+            export TREETOP_REST_IMAGE=terjekv/treetop-rest:v0.0.11
             docker compose -f docker-compose.integration.yml pull
             uv run pytest -m integration
           else

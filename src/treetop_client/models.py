@@ -43,6 +43,12 @@ def _expect_dict(value: JsonValue | None, *, field_name: str) -> JsonObject:
     raise ValueError(f"{field_name} must be an object, got {type(value).__name__}")
 
 
+def _expect_list(value: JsonValue | None, *, field_name: str) -> JsonArray:
+    if isinstance(value, list):
+        return value
+    raise ValueError(f"{field_name} must be an array, got {type(value).__name__}")
+
+
 def _expect_optional_str(value: JsonValue | None, *, field_name: str) -> str | None:
     if value is None:
         return None
@@ -52,6 +58,10 @@ def _expect_optional_str(value: JsonValue | None, *, field_name: str) -> str | N
 
 
 class Endpoint(enum.Enum):
+    LIVEZ = "/livez"
+    READYZ = "/readyz"
+    OPENAPI = "/openapi.json"
+    METRICS = "/metrics"
     HEALTH = "/api/v1/health"
     VERSION = "/api/v1/version"
     STATUS = "/api/v1/status"
@@ -322,12 +332,7 @@ def _context_to_api(context: dict[str, ContextValue]) -> JsonObject:
 class Resource:
     kind: str
     id: str
-    attrs: dict[str, ResourceAttribute]
-
-    def __post_init__(self):
-        _no_colon(self.kind, field_name="Resource.kind")
-        if not self.attrs:
-            raise ValueError("Resource.attrs cannot be empty")
+    attrs: dict[str, ResourceAttribute] = field(default_factory=dict)
 
     def to_api(self) -> JsonObject:
         return {
@@ -337,9 +342,14 @@ class Resource:
         }
 
     @classmethod
-    def new(cls, kind: str, id: str, attrs: dict[str, ResourceAttribute]) -> Resource:
+    def new(
+        cls,
+        kind: str,
+        id: str,
+        attrs: dict[str, ResourceAttribute] | None = None,
+    ) -> Resource:
         """Create a new Resource with kind and attributes."""
-        return cls(kind=kind, id=id, attrs=attrs)
+        return cls(kind=kind, id=id, attrs=attrs or {})
 
 
 @dataclass(slots=True, frozen=True)
@@ -376,6 +386,8 @@ def as_api(obj: Request | JsonObject) -> JsonObject:
 @dataclass(slots=True, frozen=True)
 class AuthorizedResponseBrief:
     decision: Decision
+    policy_id: str = ""
+    version: PolicyVersion | None = None
 
     _KEYS: ClassVar[tuple[str, ...]] = ("decision",)
 
@@ -385,13 +397,31 @@ class AuthorizedResponseBrief:
         if dec is None:
             raise KeyError("decision")
         decision = _expect_str(dec, field_name="decision")
-        return cls(decision=Decision(decision))
+        policy_id = data.get("policy_id")
+        version = data.get("version")
+        return cls(
+            decision=Decision(decision),
+            policy_id=_expect_str(policy_id, field_name="policy_id")
+            if policy_id is not None
+            else "",
+            version=PolicyVersion.from_api(_expect_dict(version, field_name="version"))
+            if version is not None
+            else None,
+        )
 
     def is_allowed(self) -> bool:
         return self.decision == Decision.ALLOW
 
     def is_denied(self) -> bool:
         return self.decision == Decision.DENY
+
+    def version_hash(self) -> str | None:
+        """Return the policy version hash if available, otherwise None."""
+        return self.version.hash if self.version else None
+
+    def version_loaded_at(self) -> datetime | None:
+        """Return the policy version loaded_at timestamp if available, otherwise None."""
+        return self.version.loaded_at if self.version else None
 
 
 @dataclass(slots=True, frozen=True)
@@ -429,6 +459,59 @@ class PolicyVersion:
         return cls(
             hash=hash_value,
             loaded_at=datetime.fromisoformat(loaded_at_value.replace("Z", "+00:00")),
+        )
+
+
+class PolicyMatchReason(str, enum.Enum):
+    PRINCIPAL_EQ = "PrincipalEq"
+    PRINCIPAL_IN = "PrincipalIn"
+    PRINCIPAL_ANY = "PrincipalAny"
+    PRINCIPAL_IS = "PrincipalIs"
+    PRINCIPAL_IS_IN = "PrincipalIsIn"
+    ACTION_EQ = "ActionEq"
+    ACTION_IN = "ActionIn"
+    ACTION_ANY = "ActionAny"
+    RESOURCE_EQ = "ResourceEq"
+    RESOURCE_IN = "ResourceIn"
+    RESOURCE_ANY = "ResourceAny"
+    RESOURCE_IS = "ResourceIs"
+    RESOURCE_IS_IN = "ResourceIsIn"
+
+
+@dataclass(slots=True, frozen=True)
+class PolicyMatch:
+    cedar_id: str
+    reasons: list[PolicyMatchReason]
+
+    @classmethod
+    def from_api(cls, data: JsonObject) -> PolicyMatch:
+        reasons = _expect_list(data.get("reasons"), field_name="reasons")
+        return cls(
+            cedar_id=_expect_str(data.get("cedar_id"), field_name="cedar_id"),
+            reasons=[
+                PolicyMatchReason(_expect_str(reason, field_name="match reason"))
+                for reason in reasons
+            ],
+        )
+
+
+@dataclass(slots=True, frozen=True)
+class UserPolicies:
+    user: str
+    policies: list[JsonValue]
+    matches: list[PolicyMatch]
+
+    @classmethod
+    def from_api(cls, data: JsonObject) -> UserPolicies:
+        policies = _expect_list(data.get("policies"), field_name="policies")
+        matches = _expect_list(data.get("matches"), field_name="matches")
+        return cls(
+            user=_expect_str(data.get("user"), field_name="user"),
+            policies=policies,
+            matches=[
+                PolicyMatch.from_api(_expect_dict(match, field_name="policy match"))
+                for match in matches
+            ],
         )
 
 
@@ -570,6 +653,7 @@ class RequestLimits:
     max_context_bytes: int
     max_context_depth: int
     max_context_keys: int
+    max_batch_size: int | None = None
 
     @classmethod
     def from_api(cls, data: JsonObject) -> RequestLimits:
@@ -583,6 +667,11 @@ class RequestLimits:
             max_context_keys=_expect_int(
                 data.get("max_context_keys"), field_name="max_context_keys"
             ),
+            max_batch_size=_expect_int(
+                data.get("max_batch_size"), field_name="max_batch_size"
+            )
+            if data.get("max_batch_size") is not None
+            else None,
         )
 
 
@@ -777,6 +866,14 @@ class AuthorizeResultBase(Generic[ResultT]):
         """Check if the decision is Deny."""
         return self.result.is_denied() if self.result is not None else False
 
+    def version_hash(self) -> str | None:
+        """Return the policy version hash for a successful result."""
+        return self.result.version_hash() if self.result is not None else None
+
+    def version_loaded_at(self) -> datetime | None:
+        """Return the policy load timestamp for a successful result."""
+        return self.result.version_loaded_at() if self.result is not None else None
+
 
 @dataclass(slots=True, frozen=True)
 class AuthorizeResultBrief(AuthorizeResultBase[AuthorizedResponseBrief]):
@@ -831,14 +928,6 @@ class AuthorizeResultDetailed(AuthorizeResultBase[AuthorizedResponseDetailed]):
     def __getitem__(self, index: int) -> PermitPolicy:
         """Return a matching policy by index."""
         return self.policies[index]
-
-    def version_hash(self) -> str | None:
-        """Return the policy version hash if available, otherwise None."""
-        return self.result.version_hash() if self.result is not None else None
-
-    def version_loaded_at(self) -> datetime | None:
-        """Return the policy version loaded_at timestamp if available, otherwise None."""
-        return self.result.version_loaded_at() if self.result is not None else None
 
 
 @dataclass(slots=True, frozen=True)

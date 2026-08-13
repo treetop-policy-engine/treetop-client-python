@@ -1,14 +1,14 @@
 services:
   integration-test-cedar-server:
-    image: svenstaro/miniserve
+    image: docker.io/svenstaro/miniserve
     ports:
-      - "18999:18999"            
+      - "18999:18999"
     volumes:
-      - ./testdata:/data:ro    
+      - ./testdata:/data:ro,Z
     command: ["/data", "--port", "18999"]
 
   integration-test-treetop-server:
-    image: terjekv/treetop-rest:develop
+    image: ${TREETOP_REST_IMAGE:-terjekv/treetop-rest:v0.0.7}
     container_name: integration-test-treetop-server
     pull_policy: "always"
     ports:

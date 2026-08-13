@@ -257,6 +257,69 @@ def test_live_check_allows_super_bare(
     assert resp.decision == Decision.ALLOW
 
 
+def test_live_v007_metadata_endpoints(client: TreeTopClient):
+    assert client.health() is True
+
+    version = client.version()
+    assert version.version == "v0.0.7"
+    assert version.core.version
+    assert version.core.cedar
+    assert version.policies.hash
+    assert version.policies.loaded_at is not None
+
+    status = client.status()
+    assert status.policy_configuration.allow_upload is False
+    assert status.policy_configuration.schema_validation_mode in {
+        "off",
+        "permissive",
+        "strict",
+    }
+    assert status.policy_configuration.policies is not None
+    assert status.policy_configuration.policies.entries > 0
+    assert status.parallel_configuration.workers > 0
+    assert status.request_limits.max_context_bytes > 0
+    assert status.request_context.supported is True
+
+
+def test_live_v007_policy_download_endpoints(client: TreeTopClient):
+    policies = client.get_policies()
+    assert not isinstance(policies, str)
+    assert policies.entries > 0
+    assert policies.content is not None
+    assert '@id("DNS.admins_policy")' in policies.content
+
+    raw_policies = client.get_policies(raw=True)
+    assert isinstance(raw_policies, str)
+    assert '@id("DNS.admins_policy")' in raw_policies
+    assert "permit (" in raw_policies
+
+
+def test_live_v007_request_context_bool_and_long(client: TreeTopClient):
+    base_request = make_request(
+        principal="alice",
+        groups=["admins", "users"],
+        action="create_host",
+        host_id="context.example.com",
+    )
+    request = Request(
+        principal=base_request.principal,
+        action=base_request.action,
+        resource=base_request.resource,
+        id="context-bool-long",
+        context={
+            "approved": True,
+            "retry_count": 3,
+            "verified": ResourceAttribute.new(
+                "false", ResourceAttributeType.BOOLEAN
+            ),
+            "quota": ResourceAttribute.new("7", ResourceAttributeType.NUMBER),
+        },
+    )
+
+    response = client.check(request)
+    assert response.decision == Decision.ALLOW
+
+
 def test_live_check_allow_detailed(
     client: TreeTopClient,
 ):

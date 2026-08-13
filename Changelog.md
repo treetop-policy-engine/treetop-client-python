@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.11] - 2026-08-13
+
+### Added
+
+- Support for Treetop REST v0.0.11 operational and discovery surfaces:
+  - `livez()` / `alivez()`
+  - `readyz()` / `areadyz()`
+  - `openapi()` / `aopenapi()` for the canonical generated OpenAPI 3.1 document
+  - `metrics()` / `ametrics()`
+  - `list_policies()` / `alist_policies()`, including groups, namespaces, and raw output
+- Typed user-policy match results and match reasons.
+- The v0.0.8+ authorization `max_batch_size` status field.
+- CodSpeed simulated-CPU benchmarks for 128-request serialization and brief-response parsing.
+- Dependabot coverage for uv and GitHub Actions.
+
+### Changed
+
+- Preserve `policy_id` and policy-version metadata from brief authorization results.
+- Align resources with the generated OpenAPI contract by allowing omitted attributes and namespaced kinds.
+- Update all Python dependencies, the lockfile, GitHub Actions, and the integration server image.
+
 ## [0.0.7] - 2026-07-05
 
 ### Added

@@ -9,6 +9,7 @@ from treetop_client.client import TreeTopClient
 from treetop_client.models import (
     Action,
     Decision,
+    PolicyMatchReason,
     QualifiedId,
     Request,
     Resource,
@@ -95,6 +96,7 @@ def add_health_version_status_responses(httpx_mock: HTTPXMock) -> None:
                 "allow_parallel": True,
             },
             "request_limits": {
+                "max_batch_size": 1024,
                 "max_context_bytes": 16384,
                 "max_context_depth": 8,
                 "max_context_keys": 64,
@@ -172,6 +174,128 @@ def test_health_version_and_status(httpx_mock: HTTPXMock):
     assert status.policy_configuration.policies is not None
     assert status.policy_configuration.policies.content == "permit (...);"
     assert status.request_context.fallback_reason == "no_schema"
+    assert status.request_limits.max_batch_size == 1024
+
+
+def test_v0_0_11_operational_and_openapi_endpoints(httpx_mock: HTTPXMock):
+    httpx_mock.add_response(method="GET", url="http://localhost:9999/livez", text="ok")
+    httpx_mock.add_response(method="GET", url="http://localhost:9999/readyz", text="ok")
+    httpx_mock.add_response(
+        method="GET",
+        url="http://localhost:9999/readyz",
+        text="not ready",
+        status_code=503,
+    )
+    httpx_mock.add_response(
+        method="GET",
+        url="http://localhost:9999/openapi.json",
+        json={"openapi": "3.1.0", "info": {"version": "0.0.11"}},
+    )
+    httpx_mock.add_response(
+        method="GET",
+        url="http://localhost:9999/metrics",
+        text="# HELP treetop_build_info Build metadata\n",
+    )
+
+    client = TreeTopClient()
+    assert client.livez()
+    assert client.readyz()
+    assert not client.readyz()
+    assert client.openapi()["openapi"] == "3.1.0"
+    assert "treetop_build_info" in client.metrics()
+
+
+def test_async_v0_0_11_operational_and_openapi_endpoints(httpx_mock: HTTPXMock):
+    httpx_mock.add_response(method="GET", url="http://localhost:9999/livez", text="ok")
+    httpx_mock.add_response(
+        method="GET",
+        url="http://localhost:9999/readyz",
+        text="not ready",
+        status_code=503,
+    )
+    httpx_mock.add_response(
+        method="GET",
+        url="http://localhost:9999/openapi.json",
+        json={"openapi": "3.1.0", "info": {"version": "0.0.11"}},
+    )
+    httpx_mock.add_response(
+        method="GET",
+        url="http://localhost:9999/metrics",
+        text="# HELP treetop_build_info Build metadata\n",
+    )
+
+    async def exercise() -> None:
+        client = TreeTopClient()
+        try:
+            assert await client.alivez()
+            assert not await client.areadyz()
+            assert (await client.aopenapi())["openapi"] == "3.1.0"
+            assert "treetop_build_info" in await client.ametrics()
+        finally:
+            await client.aclose()
+
+    asyncio.run(exercise())
+
+
+def test_list_policies(httpx_mock: HTTPXMock):
+    httpx_mock.add_response(
+        method="GET",
+        url=(
+            "http://localhost:9999/api/v1/policies/alice"
+            "?groups=admins&groups=operators&namespaces=DNS"
+        ),
+        json={
+            "user": "alice",
+            "policies": [{"effect": "permit"}],
+            "matches": [
+                {
+                    "cedar_id": "DNS.admins",
+                    "reasons": ["PrincipalIn", "ActionEq"],
+                }
+            ],
+        },
+    )
+    httpx_mock.add_response(
+        method="GET",
+        url="http://localhost:9999/api/v1/policies/alice?format=raw",
+        text="permit (...);",
+    )
+
+    client = TreeTopClient()
+    policies = client.list_policies(
+        "alice", groups=["admins", "operators"], namespaces=["DNS"]
+    )
+    assert not isinstance(policies, str)
+    assert policies.user == "alice"
+    assert policies.matches[0].cedar_id == "DNS.admins"
+    assert policies.matches[0].reasons == [
+        PolicyMatchReason.PRINCIPAL_IN,
+        PolicyMatchReason.ACTION_EQ,
+    ]
+    assert client.list_policies("alice", raw=True) == "permit (...);"
+
+
+def test_async_list_policies(httpx_mock: HTTPXMock):
+    httpx_mock.add_response(
+        method="GET",
+        url="http://localhost:9999/api/v1/policies/alice?groups=admins",
+        json={
+            "user": "alice",
+            "policies": [],
+            "matches": [],
+        },
+    )
+
+    async def exercise() -> None:
+        client = TreeTopClient()
+        try:
+            policies = await client.alist_policies("alice", groups=["admins"])
+            assert not isinstance(policies, str)
+            assert policies.user == "alice"
+        finally:
+            await client.aclose()
+
+    asyncio.run(exercise())
 
 
 def test_get_policies_and_schema(httpx_mock: HTTPXMock):
@@ -283,7 +407,14 @@ def test_authorize_single_request_brief(httpx_mock: HTTPXMock):
                     "index": 0,
                     "id": "check-1",
                     "status": "success",
-                    "result": {"decision": "Allow"},
+                    "result": {
+                        "decision": "Allow",
+                        "policy_id": "default",
+                        "version": {
+                            "hash": "result-hash",
+                            "loaded_at": "2025-12-19T00:14:38.577289000Z",
+                        },
+                    },
                 }
             ],
             "version": {
@@ -304,6 +435,9 @@ def test_authorize_single_request_brief(httpx_mock: HTTPXMock):
     assert result.is_success()
     assert result.is_allowed()
     assert result.get_decision() == Decision.ALLOW
+    assert result.result is not None
+    assert result.result.policy_id == "default"
+    assert result.result.version_hash() == "result-hash"
 
 
 def test_authorize_multiple_requests_brief(httpx_mock: HTTPXMock):

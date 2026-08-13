@@ -1,5 +1,7 @@
 # TreeTop Client
 
+[![CodSpeed](https://img.shields.io/endpoint?url=https://codspeed.io/badge.json)](https://app.codspeed.io/terjekv/treetop-client-python?utm_source=badge)
+
 Dataclass-based HTTPX client for the [Treetop REST API](https://github.com/terjekv/treetop-rest).
 Python ≥ 3.12, zero runtime deps beyond HTTPX.
 
@@ -308,7 +310,8 @@ uv add package-name
 uv add --dev package-name
 ```
 
-CPU-sensitive request serialization and response parsing are tracked in CI with
+CPU-sensitive request construction, serialization, response parsing, policy lookup,
+and mocked end-to-end client paths are tracked in CI with
 [CodSpeed](https://codspeed.io/). Its simulated-CPU mode is the closest Python
 equivalent to instruction-counted `iai-callgrind`: pull requests get stable
 regression comparisons, history, and profiles without relying on noisy hosted-runner

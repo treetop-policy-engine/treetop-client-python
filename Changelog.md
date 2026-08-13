@@ -11,6 +11,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Move the canonical source repository, performance project, and integration server image to the
   `treetop-policy-engine` organization. The PyPI project name and Python API are unchanged.
+- Lazily initialize the synchronous and asynchronous HTTPX clients, avoiding the cost
+  of constructing an unused transport.
+- Reduce authorization serialization, response parsing, result aggregation, and
+  policy-filter query overhead.
 
 ## [0.0.11] - 2026-08-13
 

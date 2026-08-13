@@ -158,6 +158,34 @@ def add_upload_responses(httpx_mock: HTTPXMock) -> None:
     )
 
 
+def test_http_clients_are_initialized_on_demand(httpx_mock: HTTPXMock):
+    httpx_mock.add_response(
+        method="GET",
+        url="http://localhost:9999/api/v1/health",
+        json={},
+        status_code=200,
+    )
+
+    client = TreeTopClient()
+    assert client.__dict__["_sync_client"] is None
+    assert client.__dict__["_async_client"] is None
+
+    assert client.health()
+    assert client.__dict__["_sync_client"] is not None
+    assert client.__dict__["_async_client"] is None
+    client.close()
+
+
+def test_closed_client_is_not_initialized_later():
+    client = TreeTopClient()
+    client.close()
+
+    with pytest.raises(RuntimeError, match="client has been closed"):
+        _ = client.health()
+
+    assert client.__dict__["_sync_client"] is None
+
+
 def test_health_version_and_status(httpx_mock: HTTPXMock):
     add_health_version_status_responses(httpx_mock)
 

@@ -1,12 +1,10 @@
 from __future__ import annotations
 
 import enum
-import re
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import ClassVar, Generic, Literal, TypeAlias, TypedDict, TypeVar, cast, override
-
-_COLON = re.compile(r":")
+from functools import lru_cache
+from typing import ClassVar, Generic, Literal, NoReturn, TypeAlias, TypedDict, TypeVar, override
 
 JsonPrimitive: TypeAlias = str | int | float | bool | None
 JsonObject: TypeAlias = dict[str, "JsonValue"]
@@ -15,7 +13,7 @@ JsonValue: TypeAlias = JsonPrimitive | JsonObject | JsonArray
 
 
 def _no_colon(value: str, *, field_name: str) -> None:
-    if _COLON.search(value):
+    if ":" in value:
         raise ValueError(f"{field_name} may not contain ':' - got {value!r}")
 
 
@@ -57,6 +55,12 @@ def _expect_optional_str(value: JsonValue | None, *, field_name: str) -> str | N
     raise ValueError(f"{field_name} must be a string or null, got {type(value).__name__}")
 
 
+@lru_cache(maxsize=256)
+def _datetime_from_api(value: str) -> datetime:
+    """Parse the small, highly repetitive set of server version timestamps."""
+    return datetime.fromisoformat(value.replace("Z", "+00:00"))
+
+
 class Endpoint(enum.Enum):
     LIVEZ = "/livez"
     READYZ = "/readyz"
@@ -75,6 +79,14 @@ class Decision(str, enum.Enum):
     DENY = "Deny"
 
 
+def _decision_from_api(value: str) -> Decision:
+    if value == "Allow":
+        return Decision.ALLOW
+    if value == "Deny":
+        return Decision.DENY
+    return Decision(value)
+
+
 @dataclass(slots=True, frozen=True)
 class QualifiedId:
     id: str
@@ -86,7 +98,7 @@ class QualifiedId:
             _no_colon(ns, field_name="QualifiedId.namespace element")
 
     def to_api(self) -> JsonObject:
-        return {"id": self.id, "namespace": cast(JsonArray, self.namespace)}
+        return {"id": self.id, "namespace": self.namespace}  # pyright: ignore[reportReturnType]
 
     @override
     def __str__(self) -> str:
@@ -109,7 +121,7 @@ class Group:
         namespace: list[str] | None = None,
     ) -> Group:
         """Create a new Group with a QualifiedId."""
-        return Group(id=QualifiedId(id=id, namespace=namespace or []))
+        return cls(id=QualifiedId(id=id, namespace=namespace or []))
 
     @override
     def __str__(self) -> str:
@@ -130,7 +142,7 @@ class Action:
         namespace: list[str] | None = None,
     ) -> Action:
         """Create a new Action."""
-        return Action(id=QualifiedId(id=id, namespace=namespace or []))
+        return cls(id=QualifiedId(id=id, namespace=namespace or []))
 
     @override
     def __str__(self) -> str:
@@ -145,7 +157,7 @@ class User:
     def to_api(self) -> JsonObject:
         return {
             **self.id.to_api(),
-            "groups": cast(JsonArray, [g.to_api() for g in self.groups]),
+            "groups": [group.to_api() for group in self.groups],
         }
 
     @classmethod
@@ -168,9 +180,18 @@ class User:
         Returns:
             A User object with the given ID, namespace, and groups.
         """
-        return User(
-            id=QualifiedId(id=id, namespace=namespace or []),
-            groups=[Group.new(id=g, namespace=namespace or []) for g in groups or []],
+        user_namespace = namespace or []
+        return cls(
+            id=QualifiedId(id=id, namespace=user_namespace),
+            groups=[
+                Group(
+                    id=QualifiedId(
+                        id=group_id,
+                        namespace=user_namespace if user_namespace else [],
+                    )
+                )
+                for group_id in groups or []
+            ],
         )
 
     @override
@@ -194,15 +215,16 @@ class ResourceAttribute:
     value: str
 
     def to_api(self) -> JsonObject:
-        if self.type == ResourceAttributeType.BOOLEAN:
+        attribute_type = self.type
+        if attribute_type is ResourceAttributeType.BOOLEAN:
             normalized = self.value.lower()
             if normalized not in {"true", "false"}:
                 raise ValueError(
                     "Boolean resource attribute value must be 'true' or 'false'"
                 )
             val = normalized == "true"
-            return {"type": self.type.value, "value": val}
-        elif self.type == ResourceAttributeType.NUMBER:
+            return {"type": attribute_type.value, "value": val}
+        if attribute_type is ResourceAttributeType.NUMBER:
             try:
                 val = int(self.value)
             except ValueError:
@@ -210,9 +232,9 @@ class ResourceAttribute:
                     "Long resource attribute value must be a signed integer"
                 ) from None
             val = _validate_i64(val, field_name="Long resource attribute value")
-            return {"type": self.type.value, "value": val}
+            return {"type": attribute_type.value, "value": val}
 
-        return {"type": self.type.value, "value": self.value}
+        return {"type": attribute_type.value, "value": self.value}
 
     @classmethod
     def new(
@@ -249,9 +271,13 @@ def _validate_i64(value: int, *, field_name: str) -> int:
     return value
 
 
-def _context_value_to_api(
-    value: ContextValue | JsonValue, *, field_name: str
-) -> JsonObject:
+def _raise_context_error(prefix: str, error: ValueError) -> NoReturn:
+    message = str(error)
+    separator = "" if message.startswith((" ", ".", "[")) else ": "
+    raise ValueError(f"{prefix}{separator}{message}") from None
+
+
+def _context_value_to_api(value: ContextValue | JsonValue) -> JsonObject:
     if isinstance(value, ResourceAttribute):
         return value.to_api()
     if isinstance(value, str):
@@ -261,70 +287,71 @@ def _context_value_to_api(
     if isinstance(value, int):
         return {
             "type": "Long",
-            "value": _validate_i64(value, field_name=field_name),
+            "value": _validate_i64(value, field_name="Long value"),
         }
     if isinstance(value, list):
+        converted: JsonArray = []
+        append = converted.append
+        for index, item in enumerate(value):
+            try:
+                append(_context_value_to_api(item))
+            except ValueError as error:
+                _raise_context_error(f"[{index}]", error)
         return {
             "type": "Set",
-            "value": cast(
-                JsonArray,
-                [
-                    _context_value_to_api(item, field_name=f"{field_name}[{index}]")
-                    for index, item in enumerate(value)
-                ],
-            ),
+            "value": converted,
         }
     if not isinstance(value, dict):
         raise ValueError(
-            f"{field_name} must be a string, bool, int, list, or AttrValue object"
+            " must be a string, bool, int, list, or AttrValue object"
         )
 
-    if set(value) != {"type", "value"}:
-        raise ValueError(
-            f"{field_name} AttrValue object must contain exactly 'type' and 'value'"
-        )
+    if len(value) != 2 or "type" not in value or "value" not in value:
+        raise ValueError(" AttrValue object must contain exactly 'type' and 'value'")
 
     attr_type = value["type"]
     attr_value = value["value"]
     if not isinstance(attr_type, str):
-        raise ValueError(f"{field_name} AttrValue type must be a string")
+        raise ValueError(" AttrValue type must be a string")
     if attr_type in {"String", "Ip"}:
         if not isinstance(attr_value, str):
-            raise ValueError(f"{field_name} {attr_type} value must be a string")
+            raise ValueError(f" {attr_type} value must be a string")
         return {"type": attr_type, "value": attr_value}
     if attr_type == "Bool":
         if not isinstance(attr_value, bool):
-            raise ValueError(f"{field_name} Bool value must be a bool")
+            raise ValueError(" Bool value must be a bool")
         return {"type": attr_type, "value": attr_value}
     if attr_type == "Long":
         if isinstance(attr_value, bool) or not isinstance(attr_value, int):
-            raise ValueError(f"{field_name} Long value must be an integer")
+            raise ValueError(" Long value must be an integer")
         return {
             "type": attr_type,
-            "value": _validate_i64(attr_value, field_name=f"{field_name} Long value"),
+            "value": _validate_i64(attr_value, field_name="Long value"),
         }
     if attr_type == "Set":
         if not isinstance(attr_value, list):
-            raise ValueError(f"{field_name} Set value must be a list")
+            raise ValueError(" Set value must be a list")
+        converted = []
+        append = converted.append
+        for index, item in enumerate(attr_value):
+            try:
+                append(_context_value_to_api(item))
+            except ValueError as error:
+                _raise_context_error(f".value[{index}]", error)
         return {
             "type": attr_type,
-            "value": cast(
-                JsonArray,
-                [
-                    _context_value_to_api(
-                        item, field_name=f"{field_name}.value[{index}]"
-                    )
-                    for index, item in enumerate(attr_value)
-                ],
-            ),
+            "value": converted,
         }
-    raise ValueError(f"{field_name} has unsupported AttrValue type {attr_type!r}")
+    raise ValueError(f" has unsupported AttrValue type {attr_type!r}")
 
 
 def _context_to_api(context: dict[str, ContextValue]) -> JsonObject:
     result: JsonObject = {}
     for key, value in context.items():
-        result[key] = _context_value_to_api(value, field_name=f"context[{key!r}]")
+        try:
+            result[key] = _context_value_to_api(value)
+        except ValueError as error:
+            _raise_context_error(f"context[{key!r}]", error)
     return result
 
 
@@ -393,20 +420,20 @@ class AuthorizedResponseBrief:
 
     @classmethod
     def from_api(cls, data: JsonObject) -> AuthorizedResponseBrief:
-        dec = data.get("decision", data.get("desicion"))
+        dec = data.get("decision")
+        if dec is None:
+            dec = data.get("desicion")
         if dec is None:
             raise KeyError("decision")
         decision = _expect_str(dec, field_name="decision")
         policy_id = data.get("policy_id")
         version = data.get("version")
         return cls(
-            decision=Decision(decision),
+            decision=_decision_from_api(decision),
             policy_id=_expect_str(policy_id, field_name="policy_id")
             if policy_id is not None
             else "",
-            version=PolicyVersion.from_api(_expect_dict(version, field_name="version"))
-            if version is not None
-            else None,
+            version=_optional_policy_version(version),
         )
 
     def is_allowed(self) -> bool:
@@ -458,8 +485,29 @@ class PolicyVersion:
         loaded_at_value = _expect_str(data.get("loaded_at"), field_name="version loaded_at")
         return cls(
             hash=hash_value,
-            loaded_at=datetime.fromisoformat(loaded_at_value.replace("Z", "+00:00")),
+            loaded_at=_datetime_from_api(loaded_at_value),
         )
+
+
+def _optional_policy_version(blob: JsonValue | None) -> PolicyVersion | None:
+    if blob is None:
+        return None
+    return PolicyVersion.from_api(_expect_dict(blob, field_name="version"))
+
+
+def _permit_policies_from_api(
+    blob: JsonValue, *, context: str, decision_data: JsonObject
+) -> list[PermitPolicy]:
+    if isinstance(blob, list):
+        if not blob:
+            raise ValueError(f"{context} has empty policy list: {decision_data!r}")
+        return [
+            PermitPolicy.from_api(_expect_dict(entry, field_name="policy"))
+            for entry in blob
+        ]
+    if isinstance(blob, dict):
+        return [PermitPolicy.from_api(blob)]
+    raise ValueError(f"{context} has malformed policy: {blob!r}")
 
 
 class PolicyMatchReason(str, enum.Enum):
@@ -478,6 +526,17 @@ class PolicyMatchReason(str, enum.Enum):
     RESOURCE_IS_IN = "ResourceIsIn"
 
 
+_POLICY_MATCH_REASON_BY_VALUE = {reason.value: reason for reason in PolicyMatchReason}
+
+
+def _policy_match_reason_from_api(value: JsonValue) -> PolicyMatchReason:
+    reason = _expect_str(value, field_name="match reason")
+    try:
+        return _POLICY_MATCH_REASON_BY_VALUE[reason]
+    except KeyError:
+        return PolicyMatchReason(reason)
+
+
 @dataclass(slots=True, frozen=True)
 class PolicyMatch:
     cedar_id: str
@@ -488,10 +547,7 @@ class PolicyMatch:
         reasons = _expect_list(data.get("reasons"), field_name="reasons")
         return cls(
             cedar_id=_expect_str(data.get("cedar_id"), field_name="cedar_id"),
-            reasons=[
-                PolicyMatchReason(_expect_str(reason, field_name="match reason"))
-                for reason in reasons
-            ],
+            reasons=[_policy_match_reason_from_api(reason) for reason in reasons],
         )
 
 
@@ -567,10 +623,8 @@ class Metadata:
         source_blob = data.get("source")
         refresh_frequency = data.get("refresh_frequency")
         return cls(
-            timestamp=datetime.fromisoformat(
-                _expect_str(data.get("timestamp"), field_name="timestamp").replace(
-                    "Z", "+00:00"
-                )
+            timestamp=_datetime_from_api(
+                _expect_str(data.get("timestamp"), field_name="timestamp")
             ),
             sha256=_expect_str(data.get("sha256"), field_name="sha256"),
             size=_expect_int(data.get("size"), field_name="size"),
@@ -733,40 +787,26 @@ class AuthorizedResponseDetailed:
 
     @classmethod
     def from_api(cls, data: JsonObject) -> AuthorizedResponseDetailed:
-        def parse_version(blob: JsonValue | None) -> PolicyVersion | None:
-            if blob is None:
-                return None
-            return PolicyVersion.from_api(_expect_dict(blob, field_name="version"))
-
-        def parse_policies(blob: JsonValue, *, context: str) -> list[PermitPolicy]:
-            if isinstance(blob, list):
-                if not blob:
-                    raise ValueError(f"{context} has empty policy list: {data!r}")
-                policies: list[PermitPolicy] = []
-                for entry in blob:
-                    policy_dict = _expect_dict(entry, field_name="policy")
-                    policies.append(PermitPolicy.from_api(policy_dict))
-                return policies
-            if isinstance(blob, dict):
-                return [PermitPolicy.from_api(blob)]
-            raise ValueError(f"{context} has malformed policy: {blob!r}")
-
-        dec = data.get("decision", data.get("desicion"))  # Temporary typo support
+        dec = data.get("decision")
+        if dec is None:
+            dec = data.get("desicion")  # Temporary typo support
         if dec is None:
             raise KeyError("decision")
 
         if isinstance(dec, str):
             # 1) Is it a simple Deny (old format)?
-            if dec == Decision.DENY.value:
-                version = parse_version(data.get("version"))
+            if dec == "Deny":
+                version = _optional_policy_version(data.get("version"))
                 return cls(decision=Decision.DENY, policies=[], version=version)
 
             # 1b) Is it a simple Allow with top-level policy/version?
-            if dec == Decision.ALLOW.value:
+            if dec == "Allow":
                 if "policy" not in data:
                     raise ValueError(f"Allow decision missing policy: {data!r}")
-                policies = parse_policies(data["policy"], context="Allow decision")
-                version = parse_version(data.get("version"))
+                policies = _permit_policies_from_api(
+                    data["policy"], context="Allow decision", decision_data=data
+                )
+                version = _optional_policy_version(data.get("version"))
                 return cls(
                     decision=Decision.ALLOW,
                     policies=policies,
@@ -775,9 +815,9 @@ class AuthorizedResponseDetailed:
             raise ValueError(f"Unrecognized decision value: {dec!r}")
 
         # 2) Is it a Deny with version (new format)?
-        if isinstance(dec, dict) and Decision.DENY.value in dec:
-            deny_dict = _expect_dict(dec[Decision.DENY.value], field_name="deny decision")
-            version = parse_version(deny_dict.get("version"))
+        if isinstance(dec, dict) and "Deny" in dec:
+            deny_dict = _expect_dict(dec["Deny"], field_name="deny decision")
+            version = _optional_policy_version(deny_dict.get("version"))
             return cls(
                 decision=Decision.DENY,
                 policies=[],
@@ -785,14 +825,16 @@ class AuthorizedResponseDetailed:
             )
 
         # 3) If it's a dict with an "Allow" key, pull the policies and optional version
-        if isinstance(dec, dict) and Decision.ALLOW.value in dec:
-            allow_dict = _expect_dict(dec[Decision.ALLOW.value], field_name="allow decision")
+        if isinstance(dec, dict) and "Allow" in dec:
+            allow_dict = _expect_dict(dec["Allow"], field_name="allow decision")
 
             if "policy" not in allow_dict:
                 raise ValueError(f"Allow decision missing policy: {dec!r}")
 
-            policies = parse_policies(allow_dict["policy"], context="Allow decision")
-            version = parse_version(allow_dict.get("version"))
+            policies = _permit_policies_from_api(
+                allow_dict["policy"], context="Allow decision", decision_data=data
+            )
+            version = _optional_policy_version(allow_dict.get("version"))
             return cls(
                 decision=Decision.ALLOW,
                 policies=policies,
@@ -834,6 +876,25 @@ ResultT = TypeVar(
     "ResultT", bound="AuthorizedResponseBrief | AuthorizedResponseDetailed"
 )
 T = TypeVar("T", bound="AuthorizeResultBrief | AuthorizeResultDetailed")
+
+
+def _authorize_result_fields(
+    data: JsonObject,
+) -> tuple[int, str | None, str, str | None]:
+    get = data.get
+    index = _expect_int(get("index"), field_name="index")
+    result_id_blob = get("id")
+    result_id = (
+        _expect_str(result_id_blob, field_name="id")
+        if result_id_blob is not None
+        else None
+    )
+    status = _expect_str(get("status"), field_name="status")
+    error_blob = get("error")
+    error = (
+        _expect_str(error_blob, field_name="error") if error_blob is not None else None
+    )
+    return index, result_id, status, error
 
 
 @dataclass(slots=True, frozen=True)
@@ -881,10 +942,7 @@ class AuthorizeResultBrief(AuthorizeResultBase[AuthorizedResponseBrief]):
 
     @classmethod
     def from_api(cls, data: JsonObject) -> AuthorizeResultBrief:
-        index = _expect_int(data.get("index"), field_name="index")
-        result_id = _expect_optional_str(data.get("id"), field_name="id")
-        status = _expect_str(data.get("status"), field_name="status")
-        error = _expect_optional_str(data.get("error"), field_name="error")
+        index, result_id, status, error = _authorize_result_fields(data)
 
         result = None
         if status == "success" and "result" in data:
@@ -900,10 +958,7 @@ class AuthorizeResultDetailed(AuthorizeResultBase[AuthorizedResponseDetailed]):
 
     @classmethod
     def from_api(cls, data: JsonObject) -> AuthorizeResultDetailed:
-        index = _expect_int(data.get("index"), field_name="index")
-        result_id = _expect_optional_str(data.get("id"), field_name="id")
-        status = _expect_str(data.get("status"), field_name="status")
-        error = _expect_optional_str(data.get("error"), field_name="error")
+        index, result_id, status, error = _authorize_result_fields(data)
 
         result = None
         if status == "success" and "result" in data:
@@ -960,15 +1015,32 @@ class AuthorizeResponseBase(Generic[T]):
 
     def denied_count(self) -> int:
         """Return the number of denied results."""
-        return sum(1 for r in self.results if r.is_success() and r.is_denied())
+        return sum(
+            1
+            for result in self.results
+            if result.status == "success"
+            and result.result is not None
+            and result.result.decision is Decision.DENY
+        )
 
     def allowed_count(self) -> int:
         """Return the number of allowed results."""
-        return sum(1 for r in self.results if r.is_success() and r.is_allowed())
+        return sum(
+            1
+            for result in self.results
+            if result.status == "success"
+            and result.result is not None
+            and result.result.decision is Decision.ALLOW
+        )
 
     def all_allowed(self) -> bool:
         """Check if all successful results are allowed."""
-        return all(r.is_allowed() for r in self.results if r.is_success())
+        return all(
+            result.result is not None
+            and result.result.decision is Decision.ALLOW
+            for result in self.results
+            if result.status == "success"
+        )
 
 
 @dataclass(slots=True, frozen=True)
@@ -978,11 +1050,15 @@ class AuthorizeResponseBrief(AuthorizeResponseBase[AuthorizeResultBrief]):
     @classmethod
     def from_api(cls, data: JsonObject) -> AuthorizeResponseBrief:
         results_blob = data.get("results")
-        results: list[AuthorizeResultBrief] = []
         if isinstance(results_blob, list):
-            for entry in results_blob:
-                result_dict = _expect_dict(entry, field_name="result entry")
-                results.append(AuthorizeResultBrief.from_api(result_dict))
+            results = [
+                AuthorizeResultBrief.from_api(
+                    _expect_dict(entry, field_name="result entry")
+                )
+                for entry in results_blob
+            ]
+        else:
+            results = []
         version = PolicyVersion.from_api(_expect_dict(data.get("version"), field_name="version"))
         successful = _expect_int(data.get("successful", 0), field_name="successful")
         failed = _expect_int(data.get("failed", 0), field_name="failed")
@@ -999,11 +1075,15 @@ class AuthorizeResponseDetailed(AuthorizeResponseBase[AuthorizeResultDetailed]):
     @classmethod
     def from_api(cls, data: JsonObject) -> AuthorizeResponseDetailed:
         results_blob = data.get("results")
-        results: list[AuthorizeResultDetailed] = []
         if isinstance(results_blob, list):
-            for entry in results_blob:
-                result_dict = _expect_dict(entry, field_name="result entry")
-                results.append(AuthorizeResultDetailed.from_api(result_dict))
+            results = [
+                AuthorizeResultDetailed.from_api(
+                    _expect_dict(entry, field_name="result entry")
+                )
+                for entry in results_blob
+            ]
+        else:
+            results = []
         version = PolicyVersion.from_api(_expect_dict(data.get("version"), field_name="version"))
         successful = _expect_int(data.get("successful", 0), field_name="successful")
         failed = _expect_int(data.get("failed", 0), field_name="failed")

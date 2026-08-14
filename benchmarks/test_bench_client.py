@@ -51,6 +51,28 @@ def loop() -> Iterator[asyncio.AbstractEventLoop]:
     loop.close()
 
 
+def test_first_sync_request_lifecycle(
+    benchmark: BenchmarkFixture,
+    httpx_mock: HTTPXMock,
+):
+    """Measure construction, first sync request, and cleanup together."""
+
+    httpx_mock.add_response(
+        method="GET",
+        url=f"{BASE_URL}/api/v1/health",
+        json={},
+    )
+
+    def create_request_and_close() -> bool:
+        instance = TreeTopClient(base_url=BASE_URL)
+        try:
+            return instance.health()
+        finally:
+            instance.close()
+
+    assert benchmark(create_request_and_close)
+
+
 @pytest.mark.parametrize("count", [1, 50])
 def test_authorize(
     benchmark: BenchmarkFixture,
@@ -164,6 +186,31 @@ def test_list_policies(
         "alice",
         groups=["admins", "operators"],
         namespaces=["DNS"],
+    )
+    assert not isinstance(policies, str)
+
+
+def test_list_policies_many_filters(
+    benchmark: BenchmarkFixture,
+    httpx_mock: HTTPXMock,
+    client: TreeTopClient,
+):
+    groups = [f"group-{index}" for index in range(100)]
+    namespaces = [f"Namespace-{index}" for index in range(20)]
+    query = "&".join(
+        [f"groups={group}" for group in groups]
+        + [f"namespaces={namespace}" for namespace in namespaces]
+    )
+    httpx_mock.add_response(
+        method="GET",
+        url=f"{BASE_URL}/api/v1/policies/alice?{query}",
+        json=user_policies_payload(25),
+    )
+    policies = benchmark(
+        client.list_policies,
+        "alice",
+        groups=groups,
+        namespaces=namespaces,
     )
     assert not isinstance(policies, str)
 

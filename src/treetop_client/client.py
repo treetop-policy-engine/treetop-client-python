@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import contextlib
 from collections.abc import Sequence
+from threading import Lock
 from typing import Final, cast
 from urllib.parse import quote
 
@@ -16,20 +17,43 @@ from treetop_client.models import (
     Endpoint,
     JsonArray,
     JsonObject,
-    JsonValue,
     Metadata,
     PolicyConfiguration,
     Request,
     StatusResponse,
     UserPolicies,
     VersionResponse,
-    as_api,
 )
 
 _DEFAULT_LIMITS: Final = httpx.Limits(
     max_connections=100,
     max_keepalive_connections=20,
 )
+
+_CLOSED_CLIENT_MESSAGE: Final = "Cannot send a request, as the client has been closed."
+
+
+def _requests_to_api(
+    requests: Request | JsonObject | Sequence[Request | JsonObject],
+) -> JsonArray:
+    if isinstance(requests, Request):
+        return [requests.to_api()]
+    if isinstance(requests, dict):
+        return [requests]
+    return cast(
+        JsonArray,
+        [request.to_api() if isinstance(request, Request) else request for request in requests],
+    )
+
+
+def _policy_query_params(
+    groups: Sequence[str], namespaces: Sequence[str], *, raw: bool
+) -> httpx.QueryParams | None:
+    items = [("groups", group) for group in groups]
+    items.extend(("namespaces", namespace) for namespace in namespaces)
+    if raw:
+        items.append(("format", "raw"))
+    return httpx.QueryParams(tuple(items)) if items else None
 
 
 class TreeTopClient:
@@ -41,26 +65,63 @@ class TreeTopClient:
         timeout: float | httpx.Timeout = 5.0,
         verify: bool | str = True,
     ):
-        self._sync_client: httpx.Client = httpx.Client(
-            base_url=base_url,
-            limits=limits or _DEFAULT_LIMITS,
-            timeout=timeout,
-            verify=verify,
-        )
-        self._async_client: httpx.AsyncClient = httpx.AsyncClient(
-            base_url=base_url,
-            limits=limits or _DEFAULT_LIMITS,
-            timeout=timeout,
-            verify=verify,
-        )
+        self._base_url: str = base_url
+        self._limits: httpx.Limits = limits or _DEFAULT_LIMITS
+        self._timeout: float | httpx.Timeout = timeout
+        self._verify: bool | str = verify
+        self._sync_client: httpx.Client | None = None
+        self._async_client: httpx.AsyncClient | None = None
+        self._client_lock: Lock = Lock()
+        self._sync_closed: bool = False
+        self._async_closed: bool = False
 
+    def _get_sync_client(self) -> httpx.Client:
+        if self._sync_closed:
+            raise RuntimeError(_CLOSED_CLIENT_MESSAGE)
+        client = self._sync_client
+        if client is None:
+            with self._client_lock:
+                if self._sync_closed:
+                    raise RuntimeError(_CLOSED_CLIENT_MESSAGE)
+                client = self._sync_client
+                if client is None:
+                    client = httpx.Client(
+                        base_url=self._base_url,
+                        limits=self._limits,
+                        timeout=self._timeout,
+                        verify=self._verify,
+                    )
+                    self._sync_client = client
+        return client
+
+    def _get_async_client(self) -> httpx.AsyncClient:
+        if self._async_closed:
+            raise RuntimeError(_CLOSED_CLIENT_MESSAGE)
+        client = self._async_client
+        if client is None:
+            with self._client_lock:
+                if self._async_closed:
+                    raise RuntimeError(_CLOSED_CLIENT_MESSAGE)
+                client = self._async_client
+                if client is None:
+                    client = httpx.AsyncClient(
+                        base_url=self._base_url,
+                        limits=self._limits,
+                        timeout=self._timeout,
+                        verify=self._verify,
+                    )
+                    self._async_client = client
+        return client
+
+    @staticmethod
     def _build_headers(
-        self,
         correlation_id: str | None = None,
         upload_token: str | None = None,
         content_type: str | None = None,
     ) -> dict[str, str] | None:
         """Build headers for the request, including a correlation ID if provided."""
+        if not correlation_id and not upload_token and not content_type:
+            return None
         headers: dict[str, str] = {}
         if correlation_id:
             headers["X-Correlation-ID"] = correlation_id
@@ -68,8 +129,6 @@ class TreeTopClient:
             headers["X-Upload-Token"] = upload_token
         if content_type:
             headers["Content-Type"] = content_type
-        if not headers:
-            return None
         return headers
 
     def _sync_post(
@@ -80,7 +139,7 @@ class TreeTopClient:
         params: dict[str, str] | httpx.QueryParams | None = None,
     ) -> httpx.Response:
         """Synchronous POST request to the given URL with JSON body and optional correlation ID."""
-        return self._sync_client.post(
+        return self._get_sync_client().post(
             url,
             json=json_body,
             headers=self._build_headers(correlation_id),
@@ -93,7 +152,7 @@ class TreeTopClient:
         correlation_id: str | None = None,
         params: dict[str, str] | httpx.QueryParams | None = None,
     ) -> httpx.Response:
-        return self._sync_client.get(
+        return self._get_sync_client().get(
             url,
             headers=self._build_headers(correlation_id),
             params=params,
@@ -109,12 +168,12 @@ class TreeTopClient:
         as_json: bool = False,
     ) -> httpx.Response:
         if as_json:
-            return self._sync_client.post(
+            return self._get_sync_client().post(
                 url,
                 json={field_name: body},
                 headers=self._build_headers(upload_token=upload_token),
             )
-        return self._sync_client.post(
+        return self._get_sync_client().post(
             url,
             content=body,
             headers=self._build_headers(
@@ -130,7 +189,7 @@ class TreeTopClient:
         params: dict[str, str] | httpx.QueryParams | None = None,
     ) -> httpx.Response:
         """Asynchronous POST request to the given URL with JSON body and optional correlation ID."""
-        return await self._async_client.post(
+        return await self._get_async_client().post(
             url,
             json=json_body,
             headers=self._build_headers(correlation_id),
@@ -143,7 +202,7 @@ class TreeTopClient:
         correlation_id: str | None = None,
         params: dict[str, str] | httpx.QueryParams | None = None,
     ) -> httpx.Response:
-        return await self._async_client.get(
+        return await self._get_async_client().get(
             url,
             headers=self._build_headers(correlation_id),
             params=params,
@@ -159,12 +218,12 @@ class TreeTopClient:
         as_json: bool = False,
     ) -> httpx.Response:
         if as_json:
-            return await self._async_client.post(
+            return await self._get_async_client().post(
                 url,
                 json={field_name: body},
                 headers=self._build_headers(upload_token=upload_token),
             )
-        return await self._async_client.post(
+        return await self._get_async_client().post(
             url,
             content=body,
             headers=self._build_headers(
@@ -376,16 +435,10 @@ class TreeTopClient:
         raw: bool = False,
     ) -> UserPolicies | str:
         """List policies matching a user, optionally as raw Cedar DSL."""
-        params = httpx.QueryParams()
-        for group in groups:
-            params = params.add("groups", group)
-        for namespace in namespaces:
-            params = params.add("namespaces", namespace)
-        if raw:
-            params = params.add("format", "raw")
+        params = _policy_query_params(groups, namespaces, raw=raw)
         resp = self._sync_get(
             f"{Endpoint.POLICIES.value}/{quote(user, safe='')}",
-            params=params if params else None,
+            params=params,
         ).raise_for_status()
         if raw:
             return resp.text
@@ -400,17 +453,11 @@ class TreeTopClient:
         raw: bool = False,
     ) -> UserPolicies | str:
         """List policies matching a user, optionally as raw Cedar DSL."""
-        params = httpx.QueryParams()
-        for group in groups:
-            params = params.add("groups", group)
-        for namespace in namespaces:
-            params = params.add("namespaces", namespace)
-        if raw:
-            params = params.add("format", "raw")
+        params = _policy_query_params(groups, namespaces, raw=raw)
         resp = (
             await self._async_get(
                 f"{Endpoint.POLICIES.value}/{quote(user, safe='')}",
-                params=params if params else None,
+                params=params,
             )
         ).raise_for_status()
         if raw:
@@ -432,11 +479,7 @@ class TreeTopClient:
         Raises:
             httpx.HTTPStatusError: If the request fails with a non-2xx status code
         """
-        request_list: JsonArray
-        if isinstance(requests, (Request, dict)):
-            request_list = [cast(JsonValue, as_api(requests))]
-        else:
-            request_list = [cast(JsonValue, as_api(req)) for req in requests]
+        request_list = _requests_to_api(requests)
         resp = self._sync_post(
             Endpoint.AUTHORIZE.value,
             json_body={"requests": request_list},
@@ -461,11 +504,7 @@ class TreeTopClient:
         Raises:
             httpx.HTTPStatusError: If the request fails with a non-2xx status code
         """
-        request_list: JsonArray
-        if isinstance(requests, (Request, dict)):
-            request_list = [cast(JsonValue, as_api(requests))]
-        else:
-            request_list = [cast(JsonValue, as_api(req)) for req in requests]
+        request_list = _requests_to_api(requests)
         resp = self._sync_post(
             Endpoint.AUTHORIZE.value,
             json_body={"requests": request_list},
@@ -491,11 +530,7 @@ class TreeTopClient:
         Raises:
             httpx.HTTPStatusError: If the request fails with a non-2xx status code
         """
-        request_list: JsonArray
-        if isinstance(requests, (Request, dict)):
-            request_list = [cast(JsonValue, as_api(requests))]
-        else:
-            request_list = [cast(JsonValue, as_api(req)) for req in requests]
+        request_list = _requests_to_api(requests)
         resp = await self._async_post(
             Endpoint.AUTHORIZE.value,
             json_body={"requests": request_list},
@@ -520,11 +555,7 @@ class TreeTopClient:
         Raises:
             httpx.HTTPStatusError: If the request fails with a non-2xx status code
         """
-        request_list: JsonArray
-        if isinstance(requests, (Request, dict)):
-            request_list = [cast(JsonValue, as_api(requests))]
-        else:
-            request_list = [cast(JsonValue, as_api(req)) for req in requests]
+        request_list = _requests_to_api(requests)
         resp = await self._async_post(
             Endpoint.AUTHORIZE.value,
             json_body={"requests": request_list},
@@ -636,13 +667,25 @@ class TreeTopClient:
 
     def close(self):
         """Close the synchronous client connection."""
+        with self._client_lock:
+            self._sync_closed = True
+            client = self._sync_client
+        if client is None:
+            return
         with contextlib.suppress(Exception):
-            self._sync_client.close()
+            client.close()
 
     async def aclose(self):
         """Close the asynchronous client connection."""
-        await self._async_client.aclose()
-        self._sync_client.close()
+        with self._client_lock:
+            self._async_closed = True
+            self._sync_closed = True
+            async_client = self._async_client
+            sync_client = self._sync_client
+        if async_client is not None:
+            await async_client.aclose()
+        if sync_client is not None:
+            sync_client.close()
 
 
 # For typing convenience

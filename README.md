@@ -1,8 +1,9 @@
 # TreeTop Client
 
-[![CodSpeed](https://img.shields.io/endpoint?url=https://codspeed.io/badge.json)](https://app.codspeed.io/terjekv/treetop-client-python?utm_source=badge)
+[![CodSpeed](https://img.shields.io/endpoint?url=https://codspeed.io/badge.json)](https://app.codspeed.io/treetop-policy-engine/treetop-client-python?utm_source=badge)
 
-Dataclass-based HTTPX client for the [Treetop REST API](https://github.com/terjekv/treetop-rest).
+Dataclass-based HTTPX client for the
+[Treetop REST API](https://github.com/treetop-policy-engine/treetop-rest).
 Python ≥ 3.12, zero runtime deps beyond HTTPX.
 
 ## Features

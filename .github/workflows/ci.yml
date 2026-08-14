@@ -39,7 +39,7 @@ jobs:
       - name: Run pytest
         run: |
           if [ "${{ matrix.integration }}" = "true" ]; then
-            export TREETOP_REST_IMAGE=terjekv/treetop-rest:v0.0.11
+            export TREETOP_REST_IMAGE=ghcr.io/treetop-policy-engine/treetop-rest:v0.0.11
             docker compose -f docker-compose.integration.yml pull
             uv run pytest -m integration
           else

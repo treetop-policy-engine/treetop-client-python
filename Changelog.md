@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Move the canonical source repository, performance project, and integration server image to the
+  `treetop-policy-engine` organization. The PyPI project name and Python API are unchanged.
+
 ## [0.0.11] - 2026-08-13
 
 ### Added

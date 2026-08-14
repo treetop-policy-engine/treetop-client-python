@@ -15,6 +15,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   of constructing an unused transport.
 - Reduce authorization serialization, response parsing, result aggregation, and
   policy-filter query overhead.
+- Update all Python dependencies and pinned GitHub Actions to their latest stable
+  releases, and validate integration behavior against Treetop REST v0.0.12.
 
 ## [0.0.11] - 2026-08-13
 

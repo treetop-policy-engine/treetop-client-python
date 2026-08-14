@@ -14,7 +14,7 @@ Python ≥ 3.12, zero runtime deps beyond HTTPX.
 - **Full Async Support**: Async/await support for all API methods
 - **Type Safe**: Fully type-hinted dataclasses for requests and responses
 - **Version Tracking**: Access policy version information (hash and loaded_at timestamp)
-- **Treetop REST v0.0.11**: Operational probes, generated OpenAPI, metrics, status, policy, and schema endpoints
+- **Treetop REST v0.0.12**: Operational probes, generated OpenAPI, metrics, status, policy, and schema endpoints
 - **Request Context**: Pass request-scoped Cedar context attributes during authorization
 
 ## Basic Usage (Single Request)
@@ -254,7 +254,7 @@ status = client.status()
 print(status.request_context.supported)
 print(status.request_limits.max_batch_size)
 
-# v0.0.11 operational and discovery endpoints
+# v0.0.12-compatible operational and discovery endpoints
 assert client.livez()
 assert client.readyz()
 openapi = client.openapi()

@@ -182,7 +182,7 @@ def test_v0_0_11_server_surfaces(client: TreeTopClient):
         "title": "treetop-rest",
         "description": "REST server for the Treetop policy management framework",
         "license": {"name": "MIT", "identifier": "MIT"},
-        "version": "0.0.11",
+        "version": "0.0.12",
     }
     assert client.status().request_limits.max_batch_size is not None
     assert "treetop_build_info" in client.metrics()
@@ -287,7 +287,7 @@ def test_live_v0011_metadata_endpoints(client: TreeTopClient):
     assert client.health() is True
 
     version = client.version()
-    assert version.version == "v0.0.11"
+    assert version.version == "v0.0.12"
     assert version.core.version
     assert version.core.cedar
     assert version.policies.hash

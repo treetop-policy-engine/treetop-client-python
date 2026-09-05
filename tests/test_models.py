@@ -258,3 +258,21 @@ def test_policy_version_rejects_invalid_generation(generation: JsonValue):
         _ = PolicyVersion.from_api({
             "hash": "abc", "loaded_at": "2026-09-05T00:00:00Z", "generation": generation,
         })
+
+
+def test_cached_versions_do_not_conflate_generation_types_or_state():
+    wire: JsonObject = {
+        "hash": "cached", "loaded_at": "2026-09-05T00:00:00Z",
+        "label_set": "labels-v1", "generation": 0,
+    }
+    original = PolicyVersion.from_api(wire)
+    assert original == PolicyVersion.from_api(dict(wire))
+    for field, value in [("label_set", "labels-v2"), ("generation", 1),
+                         ("hash", "different"), ("loaded_at", "2026-09-06T00:00:00Z")]:
+        changed: JsonObject = dict(wire)
+        changed[field] = value
+        assert PolicyVersion.from_api(changed) != original
+    for generation in [False, True]:
+        invalid: JsonObject = dict(wire, generation=generation)
+        with pytest.raises(ValueError, match="generation"):
+            _ = PolicyVersion.from_api(invalid)

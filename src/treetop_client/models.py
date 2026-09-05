@@ -484,20 +484,39 @@ class PolicyVersion:
     generation: int = 0
 
     def __post_init__(self) -> None:
-        generation = _expect_int(self.generation, field_name="version generation")
-        if isinstance(generation, bool) or not 0 <= generation <= (1 << 64) - 1:
+        generation = self.generation
+        if type(generation) is not int or not 0 <= generation <= (1 << 64) - 1:
             raise ValueError("version generation must be an unsigned 64-bit integer")
 
     @classmethod
     def from_api(cls, data: JsonObject) -> PolicyVersion:
         hash_value = _expect_str(data.get("hash"), field_name="version hash")
         loaded_at_value = _expect_str(data.get("loaded_at"), field_name="version loaded_at")
-        return cls(
-            hash=hash_value,
-            loaded_at=_datetime_from_api(loaded_at_value),
-            label_set=_expect_optional_str(data.get("label_set"), field_name="version label_set"),
-            generation=_expect_int(data.get("generation", 0), field_name="version generation"),
+        if "label_set" not in data and "generation" not in data:
+            return _policy_version_from_values(cls, hash_value, loaded_at_value)
+        return _policy_version_from_values(
+            cls,
+            hash_value,
+            loaded_at_value,
+            _expect_optional_str(data.get("label_set"), field_name="version label_set"),
+            _expect_int(data.get("generation", 0), field_name="version generation"),
         )
+
+
+@lru_cache(maxsize=256, typed=True)
+def _policy_version_from_values(
+    cls: type[PolicyVersion],
+    hash_value: str,
+    loaded_at: str,
+    label_set: str | None = None,
+    generation: int = 0,
+) -> PolicyVersion:
+    """Share immutable versions across repeated batch items, keyed by every field.
+
+    Typed keys keep booleans distinct from cached integer generations, so the
+    constructor always rejects them. Invalid constructions are never cached.
+    """
+    return cls(hash_value, _datetime_from_api(loaded_at), label_set, generation)
 
 
 def _optional_policy_version(blob: JsonValue | None) -> PolicyVersion | None:

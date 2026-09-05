@@ -19,6 +19,8 @@ from treetop_client.models import (
     AuthorizeResponseBrief,
     AuthorizeResponseDetailed,
     Metadata,
+    JsonObject,
+    PolicyVersion,
     StatusResponse,
     User,
     UserPolicies,
@@ -116,3 +118,30 @@ def test_metadata_from_api(benchmark: BenchmarkFixture):
     payload = metadata_payload()
     metadata = benchmark(Metadata.from_api, payload)
     assert metadata.entries == 12
+
+
+def test_policy_version_with_label_metadata(benchmark: BenchmarkFixture):
+    payload: JsonObject = {
+        "hash": "policy-hash", "loaded_at": "2026-09-05T00:00:00Z",
+        "label_set": "labels-hash", "generation": 7,
+    }
+    version = benchmark(PolicyVersion.from_api, payload)
+    assert version.generation == 7
+    assert version.label_set == "labels-hash"
+
+
+def test_policy_version_with_changing_generation(benchmark: BenchmarkFixture):
+    payload: JsonObject = {
+        "hash": "policy-hash", "loaded_at": "2026-09-05T00:00:00Z",
+        "label_set": "labels-hash", "generation": 0,
+    }
+    generation = 0
+
+    def parse_next_version():
+        nonlocal generation
+        generation += 1
+        payload["generation"] = generation
+        return PolicyVersion.from_api(payload)
+
+    version = benchmark(parse_next_version)
+    assert version.generation == generation

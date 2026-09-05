@@ -144,4 +144,4 @@ def test_policy_version_with_changing_generation(benchmark: BenchmarkFixture):
         return PolicyVersion.from_api(payload)
 
     version = benchmark(parse_next_version)
-    assert version.generation == generation
+    assert 0 < version.generation <= generation

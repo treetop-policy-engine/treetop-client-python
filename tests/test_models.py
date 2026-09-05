@@ -276,3 +276,23 @@ def test_cached_versions_do_not_conflate_generation_types_or_state():
         invalid: JsonObject = dict(wire, generation=generation)
         with pytest.raises(ValueError, match="generation"):
             _ = PolicyVersion.from_api(invalid)
+
+
+@pytest.mark.parametrize("modern_metadata", [False, True])
+def test_policy_version_subclasses_are_constructed_independently(modern_metadata: bool):
+    constructed: list[str] = []
+
+    class CustomPolicyVersion(PolicyVersion):
+        def __post_init__(self) -> None:
+            super().__post_init__()
+            constructed.append(self.hash)
+
+    wire: JsonObject = {"hash": "custom", "loaded_at": "2026-09-05T00:00:00Z"}
+    if modern_metadata:
+        wire.update({"label_set": "labels-v1", "generation": 7})
+    first = CustomPolicyVersion.from_api(wire)
+    second = CustomPolicyVersion.from_api(wire)
+    assert isinstance(first, CustomPolicyVersion)
+    assert first == second
+    assert first is not second
+    assert constructed == ["custom", "custom"]

@@ -16,6 +16,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Reuse immutable parsed policy versions across batch items with a bounded 256-entry
   cache keyed by all version fields and runtime types. Avoid repeated default-field
   parsing for older responses; boolean generations cannot alias cached integers.
+  Custom subclasses remain uncached so their constructors and independent state
+  retain their existing behavior.
 
 ## [0.0.12] - 2026-08-14
 

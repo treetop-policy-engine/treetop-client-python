@@ -318,3 +318,10 @@ equivalent to instruction-counted `iai-callgrind`: pull requests get stable
 regression comparisons, history, and profiles without relying on noisy hosted-runner
 wall time. Import the repository into CodSpeed once to enable result uploads; the
 workflow authenticates with GitHub OIDC and does not require a long-lived token.
+
+### Authorization state versions
+
+`PolicyVersion` includes `hash`, `loaded_at`, nullable `label_set`, and
+`generation`. The label identifier correlates configurations across engine
+replacements; generation is local to an engine instance and can restart.
+Older servers that omit the new fields default to `None` and `0`.

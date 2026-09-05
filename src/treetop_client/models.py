@@ -476,8 +476,17 @@ class PermitPolicy:
 
 @dataclass(slots=True, frozen=True)
 class PolicyVersion:
+    """Policy and label state; generation is local to one engine instance."""
+
     hash: str
     loaded_at: datetime
+    label_set: str | None = None
+    generation: int = 0
+
+    def __post_init__(self) -> None:
+        generation = _expect_int(self.generation, field_name="version generation")
+        if isinstance(generation, bool) or not 0 <= generation <= (1 << 64) - 1:
+            raise ValueError("version generation must be an unsigned 64-bit integer")
 
     @classmethod
     def from_api(cls, data: JsonObject) -> PolicyVersion:
@@ -486,6 +495,8 @@ class PolicyVersion:
         return cls(
             hash=hash_value,
             loaded_at=_datetime_from_api(loaded_at_value),
+            label_set=_expect_optional_str(data.get("label_set"), field_name="version label_set"),
+            generation=_expect_int(data.get("generation", 0), field_name="version generation"),
         )
 
 

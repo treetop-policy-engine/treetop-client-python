@@ -5,11 +5,14 @@ import pytest
 from treetop_client.models import (
     Action,
     AuthorizedResponseDetailed,
+    AuthorizedResponseBrief,
     ContextValue,
     Decision,
     Group,
     JsonObject,
     QualifiedId,
+    PolicyVersion,
+    JsonValue,
     Request,
     Resource,
     ResourceAttribute,
@@ -223,3 +226,35 @@ def test_detailed_response_current_full_shape():
     assert resp.decision == Decision.ALLOW
     assert resp.version_hash() == "abc123"
     assert resp.policies[0].literal == "permit (...);"
+
+
+@pytest.mark.parametrize("label_set", [None, "labels-v2"])
+@pytest.mark.parametrize("generation", [0, 7, (1 << 64) - 1])
+def test_policy_version_retains_complete_state(label_set: str | None, generation: int):
+    wire: JsonObject = {
+        "hash": "abc", "loaded_at": "2026-09-05T00:00:00Z",
+        "label_set": label_set, "generation": generation,
+    }
+    version = PolicyVersion.from_api(wire)
+    assert version.label_set == label_set
+    assert version.generation == generation
+    assert version == PolicyVersion.from_api(wire)
+    changed: JsonObject = dict(wire, generation=(generation + 1) % (1 << 64))
+    assert version != PolicyVersion.from_api(changed)
+    for response_type in [AuthorizedResponseBrief, AuthorizedResponseDetailed]:
+        response = response_type.from_api({"decision": "Deny", "policy": [], "version": wire})
+        assert response.version == version
+
+
+def test_policy_version_defaults_for_older_servers():
+    version = PolicyVersion.from_api({"hash": "abc", "loaded_at": "2026-09-05T00:00:00Z"})
+    assert version.label_set is None
+    assert version.generation == 0
+
+
+@pytest.mark.parametrize("generation", [-1, 1 << 64, True, False, 1.5, "1", None])
+def test_policy_version_rejects_invalid_generation(generation: JsonValue):
+    with pytest.raises((TypeError, ValueError), match="generation"):
+        _ = PolicyVersion.from_api({
+            "hash": "abc", "loaded_at": "2026-09-05T00:00:00Z", "generation": generation,
+        })

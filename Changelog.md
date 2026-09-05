@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Retain nullable `label_set` and unsigned 64-bit `generation` in `PolicyVersion`
+  and authorization/version response parsing. Older servers default to `None`
+  and `0`; model equality now includes both state dimensions. Invalid generations,
+  including booleans, are rejected.
+
 ## [0.0.12] - 2026-08-14
 
 ### Changed

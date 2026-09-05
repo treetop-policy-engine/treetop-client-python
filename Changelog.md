@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Exercise the full integration suite against REST v0.0.16 and v0.0.12, including
+  the label-configuration identifier from the current server.
 - Retain nullable `label_set` and unsigned 64-bit `generation` in `PolicyVersion`
   and authorization/version response parsing. Older servers default to `None`
   and `0`; model equality now includes both state dimensions. Invalid generations,

@@ -23,6 +23,7 @@ pytestmark = pytest.mark.integration
 
 PORT = 10101
 NAMESPACE = ["DNS"]
+SERVER_VERSION = os.environ.get("TREETOP_REST_VERSION", "v0.0.16")
 
 
 def make_host_resource(
@@ -182,7 +183,7 @@ def test_v0_0_11_server_surfaces(client: TreeTopClient):
         "title": "treetop-rest",
         "description": "REST server for the Treetop policy management framework",
         "license": {"name": "MIT", "identifier": "MIT"},
-        "version": "0.0.12",
+        "version": SERVER_VERSION.removeprefix("v"),
     }
     assert client.status().request_limits.max_batch_size is not None
     assert "treetop_build_info" in client.metrics()
@@ -287,11 +288,14 @@ def test_live_v0011_metadata_endpoints(client: TreeTopClient):
     assert client.health() is True
 
     version = client.version()
-    assert version.version == "v0.0.12"
+    assert version.version == SERVER_VERSION
     assert version.core.version
     assert version.core.cedar
     assert version.policies.hash
     assert version.policies.loaded_at is not None
+    if SERVER_VERSION == "v0.0.16":
+        assert version.policies.label_set is not None
+        assert len(version.policies.label_set) == 64
 
     status = client.status()
     assert status.policy_configuration.allow_upload is False

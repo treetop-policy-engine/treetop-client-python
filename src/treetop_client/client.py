@@ -9,11 +9,8 @@ from urllib.parse import quote
 import httpx
 
 from treetop_client.models import (
-    AuthorizedResponseBrief,
-    AuthorizedResponseDetailed,
     AuthorizeResponseBrief,
     AuthorizeResponseDetailed,
-    Decision,
     Endpoint,
     JsonArray,
     JsonObject,
@@ -35,15 +32,12 @@ _CLOSED_CLIENT_MESSAGE: Final = "Cannot send a request, as the client has been c
 
 def _requests_to_api(
     requests: Request | JsonObject | Sequence[Request | JsonObject],
-) -> JsonArray:
+) -> list[JsonObject]:
     if isinstance(requests, Request):
         return [requests.to_api()]
     if isinstance(requests, dict):
         return [requests]
-    return cast(
-        JsonArray,
-        [request.to_api() if isinstance(request, Request) else request for request in requests],
-    )
+    return [request.to_api() if isinstance(request, Request) else request for request in requests]
 
 
 def _policy_query_params(
@@ -273,15 +267,6 @@ class TreeTopClient:
         resp = await self._async_get(Endpoint.METRICS.value)
         return resp.raise_for_status().text
 
-    def health(self) -> bool:
-        """Return True when the server health endpoint responds with a 2xx status."""
-        return self._sync_get(Endpoint.HEALTH.value).raise_for_status().is_success
-
-    async def ahealth(self) -> bool:
-        """Return True when the server health endpoint responds with a 2xx status."""
-        resp = await self._async_get(Endpoint.HEALTH.value)
-        return resp.raise_for_status().is_success
-
     def version(self) -> VersionResponse:
         """Fetch server, core, policy, and schema version metadata."""
         resp = self._sync_get(Endpoint.VERSION.value)
@@ -482,12 +467,14 @@ class TreeTopClient:
         request_list = _requests_to_api(requests)
         resp = self._sync_post(
             Endpoint.AUTHORIZE.value,
-            json_body={"requests": request_list},
+            json_body={"requests": cast(JsonArray, request_list)},
             correlation_id=correlation_id,
         )
-        return AuthorizeResponseBrief.from_api(
+        response = AuthorizeResponseBrief.from_api(
             cast(JsonObject, resp.raise_for_status().json())
         )
+        response.validate_requests(request_list)
+        return response
 
     def authorize_detailed(
         self,
@@ -507,13 +494,15 @@ class TreeTopClient:
         request_list = _requests_to_api(requests)
         resp = self._sync_post(
             Endpoint.AUTHORIZE.value,
-            json_body={"requests": request_list},
+            json_body={"requests": cast(JsonArray, request_list)},
             correlation_id=correlation_id,
             params={"detail": "full"},
         )
-        return AuthorizeResponseDetailed.from_api(
+        response = AuthorizeResponseDetailed.from_api(
             cast(JsonObject, resp.raise_for_status().json())
         )
+        response.validate_requests(request_list)
+        return response
 
     async def aauthorize(
         self,
@@ -533,12 +522,14 @@ class TreeTopClient:
         request_list = _requests_to_api(requests)
         resp = await self._async_post(
             Endpoint.AUTHORIZE.value,
-            json_body={"requests": request_list},
+            json_body={"requests": cast(JsonArray, request_list)},
             correlation_id=correlation_id,
         )
-        return AuthorizeResponseBrief.from_api(
+        response = AuthorizeResponseBrief.from_api(
             cast(JsonObject, resp.raise_for_status().json())
         )
+        response.validate_requests(request_list)
+        return response
 
     async def aauthorize_detailed(
         self,
@@ -558,112 +549,15 @@ class TreeTopClient:
         request_list = _requests_to_api(requests)
         resp = await self._async_post(
             Endpoint.AUTHORIZE.value,
-            json_body={"requests": request_list},
+            json_body={"requests": cast(JsonArray, request_list)},
             correlation_id=correlation_id,
             params={"detail": "full"},
         )
-        return AuthorizeResponseDetailed.from_api(
+        response = AuthorizeResponseDetailed.from_api(
             cast(JsonObject, resp.raise_for_status().json())
         )
-
-    # Compatibility methods for single-request API (wraps batch API)
-    def check(
-        self, request: Request | JsonObject, correlation_id: str | None = None
-    ) -> AuthorizedResponseBrief:
-        """Check the given request. Synchronous version (compatibility wrapper).
-
-        This method provides backward compatibility with the old single-request API.
-        It wraps the new batch authorize endpoint.
-
-        Args:
-            request: The request to check, either as a Request object or a dictionary.
-            correlation_id: Optional correlation ID for tracing the request.
-        Returns:
-            An AuthorizedResponseBrief containing the result of the check.
-        Raises:
-            httpx.HTTPStatusError: If the request fails with a non-2xx status code
-        """
-        response = self.authorize(request, correlation_id=correlation_id)
-        if not response.results:
-            raise ValueError("No results returned from authorize endpoint")
-        result = response.results[0]
-        if result.status == "failed":
-            raise RuntimeError(f"Authorization failed: {result.error}")
-        return result.result or AuthorizedResponseBrief(Decision.DENY)
-
-    def check_detailed(
-        self, request: Request | JsonObject, correlation_id: str | None = None
-    ) -> AuthorizedResponseDetailed:
-        """Check the given request with detailed output. Synchronous version (compatibility wrapper).
-
-        This method provides backward compatibility with the old single-request API.
-        It wraps the new batch authorize_detailed endpoint.
-
-        Args:
-            request: The request to check, either as a Request object or a dictionary.
-            correlation_id: Optional correlation ID for tracing the request.
-        Returns:
-            An AuthorizedResponseDetailed containing the detailed result of the check.
-        Raises:
-            httpx.HTTPStatusError: If the request fails with a non-2xx status code
-        """
-        response = self.authorize_detailed(request, correlation_id=correlation_id)
-        if not response.results:
-            raise ValueError("No results returned from authorize endpoint")
-        result = response.results[0]
-        if result.status == "failed":
-            raise RuntimeError(f"Authorization failed: {result.error}")
-        return result.result or AuthorizedResponseDetailed(Decision.DENY, [], None)
-
-    async def acheck(
-        self, request: Request | JsonObject, correlation_id: str | None = None
-    ) -> AuthorizedResponseBrief:
-        """Check the given request. Asynchronous version (compatibility wrapper).
-
-        This method provides backward compatibility with the old single-request API.
-        It wraps the new batch aauthorize endpoint.
-
-        Args:
-            request: The request to check, either as a Request object or a dictionary.
-            correlation_id: Optional correlation ID for tracing the request.
-        Returns:
-            An AuthorizedResponseBrief containing the result of the check.
-        Raises:
-            httpx.HTTPStatusError: If the request fails with a non-2xx status code
-        """
-        response = await self.aauthorize(request, correlation_id=correlation_id)
-        if not response.results:
-            raise ValueError("No results returned from authorize endpoint")
-        result = response.results[0]
-        if result.status == "failed":
-            raise RuntimeError(f"Authorization failed: {result.error}")
-        return result.result or AuthorizedResponseBrief(Decision.DENY)
-
-    async def acheck_detailed(
-        self, request: Request | JsonObject, correlation_id: str | None = None
-    ) -> AuthorizedResponseDetailed:
-        """Check the given request with detailed output. Asynchronous version (compatibility wrapper).
-
-        This method provides backward compatibility with the old single-request API.
-        It wraps the new batch aauthorize_detailed endpoint.
-
-        Args:
-            request: The request to check, either as a Request object or a dictionary.
-            correlation_id: Optional correlation ID for tracing the request.
-        Returns:
-            An AuthorizedResponseDetailed containing the detailed result of the check.
-        Raises:
-            httpx.HTTPStatusError: If the request fails with a non-2xx status code
-        """
-        response = await self.aauthorize_detailed(
-            request, correlation_id=correlation_id
-        )
-        if not response.results:
-            raise ValueError("No results returned from authorize endpoint")
-        result = response.results[0]
-        if result.status == "failed":
-            raise RuntimeError(f"Authorization failed: {result.error}")
-        return result.result or AuthorizedResponseDetailed(Decision.DENY, [], None)
+        response.validate_requests(request_list)
+        return response
 
     def close(self):
         """Close the synchronous client connection."""

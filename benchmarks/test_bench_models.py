@@ -123,8 +123,7 @@ def test_metadata_from_api(benchmark: BenchmarkFixture):
 def test_policy_version_with_label_metadata(benchmark: BenchmarkFixture):
     payload: JsonObject = {
         "hash": "policy-hash", "loaded_at": "2026-09-05T00:00:00Z",
-        "label_set": "labels-hash", "generation": 7,
-    }
+        "label_set": "labels-hash", "generation": 7}
     version = benchmark(PolicyVersion.from_api, payload)
     assert version.generation == 7
     assert version.label_set == "labels-hash"
@@ -133,8 +132,7 @@ def test_policy_version_with_label_metadata(benchmark: BenchmarkFixture):
 def test_policy_version_with_changing_generation(benchmark: BenchmarkFixture):
     payload: JsonObject = {
         "hash": "policy-hash", "loaded_at": "2026-09-05T00:00:00Z",
-        "label_set": "labels-hash", "generation": 0,
-    }
+        "label_set": "labels-hash", "generation": 0}
     generation = 0
 
     def parse_next_version():

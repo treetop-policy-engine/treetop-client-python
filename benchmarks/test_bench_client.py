@@ -24,7 +24,6 @@ from pytest_codspeed import BenchmarkFixture
 from pytest_httpx import HTTPXMock
 
 from treetop_client.client import TreeTopClient
-from treetop_client.models import Decision
 
 BASE_URL = "http://treetop.test"
 
@@ -59,14 +58,14 @@ def test_first_sync_request_lifecycle(
 
     httpx_mock.add_response(
         method="GET",
-        url=f"{BASE_URL}/api/v1/health",
+        url=f"{BASE_URL}/livez",
         json={},
     )
 
     def create_request_and_close() -> bool:
         instance = TreeTopClient(base_url=BASE_URL)
         try:
-            return instance.health()
+            return instance.livez()
         finally:
             instance.close()
 
@@ -107,16 +106,16 @@ def test_authorize_detailed(
     assert len(response) == count
 
 
-def test_check(benchmark: BenchmarkFixture, httpx_mock: HTTPXMock, client: TreeTopClient):
-    """Single-request compatibility wrapper around the batch endpoint."""
+def test_authorize_single(benchmark: BenchmarkFixture, httpx_mock: HTTPXMock, client: TreeTopClient):
+    """Single request input through the current batch endpoint."""
     httpx_mock.add_response(
         method="POST",
         url=f"{BASE_URL}/api/v1/authorize",
         json=brief_batch_payload(1),
     )
     request = make_requests(1)[0]
-    result = benchmark(client.check, request)
-    assert result.decision == Decision.DENY
+    result = benchmark(client.authorize, request)
+    assert result.results[0].is_denied()
 
 
 def test_async_authorize(

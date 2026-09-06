@@ -7,19 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Added
+## [0.1.0] - 2026-09-06
 
-- Exercise the full integration suite against REST v0.0.16 and v0.0.12, including
-  the label-configuration identifier from the current server.
-- Retain nullable `label_set` and unsigned 64-bit `generation` in `PolicyVersion`
-  and authorization/version response parsing. Older servers default to `None`
-  and `0`; model equality now includes both state dimensions. Invalid generations,
-  including booleans, are rejected.
-- Reuse immutable parsed policy versions across batch items with a bounded 256-entry
-  cache keyed by all version fields and runtime types. Avoid repeated default-field
-  parsing for older responses; boolean generations cannot alias cached integers.
-  Custom subclasses remain uncached so their constructors and independent state
-  retain their existing behavior, including keyword-only and legacy constructors.
+### Breaking changes
+
+- Require one response per submitted request with the same ID. Reject inconsistent Allow/Deny policy IDs or arrays, missing permit Cedar IDs, and missing metadata content instead of filling legacy defaults.
+
+- Schema revisions use `SchemaVersion` with required `hash` and `loaded_at`, separately from policy/label generations. REST and Core version strings are package versions without a `v` prefix.
+
+- Target the coordinated REST 0.1.0 contract. Require complete policy versions,
+  schema metadata, request limits, and context capabilities; remove old defaults.
+- Remove `check`, `check_detailed`, `acheck`, `acheck_detailed`, `health`, and
+  `ahealth`. Use the batch authorization API and `livez`/`alivez`.
+- Reject the `desicion` typo, tagged legacy decisions, and scalar detailed-policy
+  responses. Require canonical decision strings and policy arrays.
+- Validate batch counts, ordered indices, result status, and complete version
+  coherence. Empty batches and batches with failed items never satisfy `all_allowed`.
+- Migrate label fixtures to declared resource-type/attribute targets and bundle
+  format 2. Rebuild and re-sign archives; see [MIGRATION.md](MIGRATION.md).
+
+### Verification
+
+- Require a healthy pinned HTTP fixture before REST starts; wait for both policy
+  and label loading, fail setup errors, and always clean up integration containers.
+
+### Performance
+
+- Reuse immutable policy versions in a bounded 256-entry cache keyed by all four
+  required fields and their runtime types. Invalid values cannot enter the cache;
+  boolean generations cannot alias integers. Subclasses remain uncached and must
+  accept all four current fields.
 
 ## [0.0.12] - 2026-08-14
 

@@ -65,7 +65,7 @@ def make_requests(count: int, *, with_context: bool = False) -> list[Request]:
 
 
 def version_payload() -> JsonObject:
-    return {"hash": "policyhash", "loaded_at": _TIMESTAMP}
+    return {"hash": "policyhash", "loaded_at": _TIMESTAMP, "label_set": None, "generation": 0}
 
 
 def policy_payload(index: int = 0) -> JsonObject:
@@ -115,21 +115,17 @@ def brief_batch_payload(count: int) -> JsonObject:
 def detailed_batch_payload(count: int) -> JsonObject:
     results: JsonArray = []
     for i in range(count):
-        if i % 3:
-            decision: JsonObject = {
-                "Allow": {
-                    "policy": cast(JsonArray, [policy_payload(i)]),
-                    "version": version_payload(),
-                }
-            }
-        else:
-            decision = {"Deny": {"version": version_payload()}}
+        decision: JsonObject = {
+            "decision": "Allow" if i % 3 else "Deny",
+            "policy": cast(JsonArray, [policy_payload(i)]) if i % 3 else [],
+            "version": version_payload(),
+        }
         results.append(
             {
                 "index": i,
                 "id": f"req-{i}",
                 "status": "success",
-                "result": {"decision": decision},
+                "result": decision,
             }
         )
     return {
@@ -186,6 +182,7 @@ def status_payload() -> JsonObject:
             "allow_parallel": True,
         },
         "request_limits": {
+            "max_batch_size": 1024,
             "max_context_bytes": 65536,
             "max_context_depth": 8,
             "max_context_keys": 64,
@@ -203,5 +200,5 @@ def version_response_payload() -> JsonObject:
         "version": "v0.0.7",
         "core": {"version": "0.3.0", "cedar": "0.11.0"},
         "policies": version_payload(),
-        "schema": {"hash": "schemahash", "loaded_at": _TIMESTAMP},
+        "schema": {"hash": "schemahash", "loaded_at": _TIMESTAMP, "label_set": None, "generation": 0},
     }

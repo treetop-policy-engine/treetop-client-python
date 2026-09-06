@@ -1,6 +1,6 @@
 [project]
 name = "treetop-client"
-version = "0.0.12"
+version = "0.1.0"
 description = "Python client library for the Treetop policy server"
 authors = [{ name = "Terje Kvernes", email = "terje@kvernes.no" }]
 license = { text = "MIT" }
@@ -27,6 +27,7 @@ packages = ["src/treetop_client"]
 [tool.hatch.build.targets.sdist]
 include = [
     "/Changelog.md",
+    "/MIGRATION.md",
     "/LICENSE",
     "/README.md",
     "/pyproject.toml",

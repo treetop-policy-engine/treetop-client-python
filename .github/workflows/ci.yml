@@ -14,9 +14,6 @@ jobs:
         include:
           - integration: false
           - integration: true
-            server-version: v0.0.12
-          - integration: true
-            server-version: v0.0.16
 
     steps:
       - name: Check out code
@@ -44,8 +41,8 @@ jobs:
       - name: Run pytest
         run: |
           if [ "${{ matrix.integration }}" = "true" ]; then
-            export TREETOP_REST_VERSION=${{ matrix.server-version }}
-            export TREETOP_REST_IMAGE=ghcr.io/treetop-policy-engine/treetop-rest:$TREETOP_REST_VERSION
+            export TREETOP_REST_VERSION=v0.1.0
+            export TREETOP_REST_IMAGE=ghcr.io/treetop-policy-engine/treetop-rest@sha256:d1fdd7536f31dde0b922f9516baa16a1f5ee7ecd4ab1c0892afd555128acc43e
             docker compose -f docker-compose.integration.yml pull
             uv run pytest -m integration
           else

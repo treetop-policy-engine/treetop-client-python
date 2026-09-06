@@ -3,7 +3,6 @@ import re
 import subprocess
 import time
 from pathlib import Path
-from typing import cast
 
 import httpx
 import pytest
@@ -23,7 +22,7 @@ pytestmark = pytest.mark.integration
 
 PORT = 10101
 NAMESPACE = ["DNS"]
-SERVER_VERSION = os.environ.get("TREETOP_REST_VERSION", "v0.0.16")
+SERVER_VERSION = os.environ.get("TREETOP_REST_VERSION", "v0.1.0")
 
 
 def make_host_resource(
@@ -143,39 +142,33 @@ def docker_compose_up_down(tmp_path_factory: pytest.TempPathFactory):
         yield
         return
 
-    # bring up
     _ = tmp_path_factory
-    _ = subprocess.check_call(
-        ["docker", "compose", "-f", "docker-compose.integration.yml", "up", "-d"]
-    )
-    # wait for the server to be ready
-    for _ in range(10):
-        try:
-            resp = httpx.get(f"http://localhost:{PORT}/api/v1/policies", timeout=1.0)
-            if resp.status_code == 200:
-                payload = cast(dict[str, object], resp.json())
-                policies = payload.get("policies")
-                entries = 0
-                if isinstance(policies, dict):
-                    policies_dict = cast(dict[str, object], policies)
-                    entries_val = policies_dict.get("entries", 0)
-                    entries = entries_val if isinstance(entries_val, int) else 0
-                if entries:
-                    break
-                else:
-                    time.sleep(1)
-        except Exception:
-            time.sleep(1)
-    else:
-        pytest.skip("policy-server did not start in time")
-    yield
-    # tear down
-    _ = subprocess.call(
-        ["docker", "compose", "-f", "docker-compose.integration.yml", "down"]
-    )
+    compose = ["docker", "compose", "-f", "docker-compose.integration.yml"]
+    try:
+        _ = subprocess.check_call([*compose, "up", "-d"], timeout=60)
+        deadline = time.monotonic() + 60
+        while time.monotonic() < deadline:
+            try:
+                resp = httpx.get(f"http://localhost:{PORT}/api/v1/status", timeout=1.0)
+                if resp.status_code == 200:
+                    status = TreeTopClient(base_url=f"http://localhost:{PORT}")
+                    try:
+                        configuration = status.status().policy_configuration
+                        if configuration.policies.entries > 0 and configuration.labels.entries > 0:
+                            break
+                    finally:
+                        status.close()
+            except (httpx.HTTPError, ValueError, KeyError):
+                pass
+            time.sleep(0.2)
+        else:
+            pytest.fail("policy-server did not load both policy and label fixtures in time")
+        yield
+    finally:
+        _ = subprocess.call([*compose, "down"], timeout=30)
 
 
-def test_v0_0_11_server_surfaces(client: TreeTopClient):
+def test_current_server_surfaces(client: TreeTopClient):
     assert client.livez()
     assert client.readyz()
     assert client.openapi()["openapi"] == "3.1.0"
@@ -245,7 +238,9 @@ def test_live_check_allows_user(
     client: TreeTopClient,
 ):
     req = make_request(principal, action, "host.example.com", groups)
-    resp = client.check(req)
+    resp_batch = client.authorize(req)
+    resp = resp_batch.results[0].result
+    assert resp is not None
     if expected:
         assert resp.is_allowed()
         assert resp.decision == Decision.ALLOW
@@ -279,23 +274,24 @@ def test_live_check_allows_super_bare(
         action=Action.new("any"),
         resource=Resource.new(resource_kind, id, attrs),
     )
-    resp = client.check(req)
+    resp_batch = client.authorize(req)
+    resp = resp_batch.results[0].result
+    assert resp is not None
     assert resp.is_allowed()
     assert resp.decision == Decision.ALLOW
 
 
-def test_live_v0011_metadata_endpoints(client: TreeTopClient):
-    assert client.health() is True
+def test_current_metadata_endpoints(client: TreeTopClient):
+    assert client.livez() is True
 
     version = client.version()
-    assert version.version == SERVER_VERSION
+    assert version.version == SERVER_VERSION.removeprefix("v")
     assert version.core.version
     assert version.core.cedar
     assert version.policies.hash
     assert version.policies.loaded_at is not None
-    if SERVER_VERSION == "v0.0.16":
-        assert version.policies.label_set is not None
-        assert len(version.policies.label_set) == 64
+    assert version.policies.label_set is not None
+    assert len(version.policies.label_set) == 64
 
     status = client.status()
     assert status.policy_configuration.allow_upload is False
@@ -346,7 +342,9 @@ def test_live_v0011_request_context_bool_and_long(client: TreeTopClient):
         },
     )
 
-    response = client.check(request)
+    response_batch = client.authorize(request)
+    response = response_batch.results[0].result
+    assert response is not None
     assert response.decision == Decision.ALLOW
 
 
@@ -354,7 +352,9 @@ def test_live_check_allow_detailed(
     client: TreeTopClient,
 ):
     req = make_request("alice", "view_host", "host.example.com", ["admins"])
-    resp = client.check_detailed(req)
+    resp_batch = client.authorize_detailed(req)
+    resp = resp_batch.results[0].result
+    assert resp is not None
     assert resp.is_allowed()
     assert resp.decision == Decision.ALLOW
     assert len(resp.policies) > 0
@@ -382,7 +382,7 @@ permit (
     assert len(annotation_ids) > 0
     assert annotation_ids[0] == "DNS.admins_policy"
     
-    cedar_ids = [p.cedar_id for p in policies if p.cedar_id is not None]
+    cedar_ids = [p.cedar_id for p in policies]
     assert len(cedar_ids) > 0
     # Cedar ID should be present (e.g., "policy0", "policy1", etc.)
     assert cedar_ids[0].startswith("policy")
@@ -452,7 +452,9 @@ def test_live_policies_match_dns_cedar(
     client: TreeTopClient,
 ):
     expected = load_dns_policy_literals()
-    resp = client.check_detailed(req)
+    resp_batch = client.authorize_detailed(req)
+    resp = resp_batch.results[0].result
+    assert resp is not None
     assert resp.is_allowed()
 
     policies = list(resp)
@@ -476,7 +478,9 @@ def test_live_forbid_policy_enforced(
 
     # Charlie is an admin, but forbid policy should override the allow.
     req = make_request("charlie", "delete_host", "host.example.com", ["admins"])
-    resp = client.check_detailed(req)
+    resp_batch = client.authorize_detailed(req)
+    resp = resp_batch.results[0].result
+    assert resp is not None
     assert resp.is_denied()
     assert len(resp) == 0
 
@@ -493,7 +497,9 @@ def test_live_multiple_policy_ids_present(
         "10.0.0.1",
         ["admins"],
     )
-    resp = client.check_detailed(req)
+    resp_batch = client.authorize_detailed(req)
+    resp = resp_batch.results[0].result
+    assert resp is not None
     assert resp.is_allowed()
 
     policies = list(resp)
@@ -503,7 +509,7 @@ def test_live_multiple_policy_ids_present(
     assert None not in annotation_ids
     assert {pid for pid in annotation_ids if pid is not None} == expected_ids
 
-    cedar_ids = [p.cedar_id for p in policies if p.cedar_id is not None]
+    cedar_ids = [p.cedar_id for p in policies]
     assert len(cedar_ids) == len(policies)
     assert len(set(cedar_ids)) == len(cedar_ids)
 
@@ -522,7 +528,9 @@ def test_live_users_ip_network_range(
         "192.168.1.42",
         ["users"],
     )
-    allow_resp_192 = client.check_detailed(allow_req_192)
+    allow_resp_192_batch = client.authorize_detailed(allow_req_192)
+    allow_resp_192 = allow_resp_192_batch.results[0].result
+    assert allow_resp_192 is not None
     assert allow_resp_192.is_allowed()
     assert len(allow_resp_192) == 1
     assert allow_resp_192[0].annotation_id == "DNS.users_ip_network_policy"
@@ -533,7 +541,9 @@ def test_live_users_ip_network_range(
         "10.1.2.3",
         ["users"],
     )
-    allow_resp_10 = client.check_detailed(allow_req_10)
+    allow_resp_10_batch = client.authorize_detailed(allow_req_10)
+    allow_resp_10 = allow_resp_10_batch.results[0].result
+    assert allow_resp_10 is not None
     assert allow_resp_10.is_allowed()
     assert len(allow_resp_10) == 1
     assert allow_resp_10[0].annotation_id == "DNS.users_ip_network_policy"
@@ -544,7 +554,9 @@ def test_live_users_ip_network_range(
         "172.16.0.1",
         ["users"],
     )
-    deny_resp = client.check_detailed(deny_req)
+    deny_resp_batch = client.authorize_detailed(deny_req)
+    deny_resp = deny_resp_batch.results[0].result
+    assert deny_resp is not None
     assert deny_resp.is_denied()
     assert len(deny_resp) == 0
 

@@ -1,16 +1,19 @@
 services:
   integration-test-cedar-server:
-    image: docker.io/svenstaro/miniserve
-    ports:
-      - "18999:18999"
+    image: docker.io/library/python@sha256:78e98729f8fc4099e53cffb3fe59fd15b18dfa4ace8c914dee0cefa5320068eb # 3.12-alpine
     volumes:
       - ./testdata:/data:ro,Z
-    command: ["/data", "--port", "18999"]
+    command: ["python", "-m", "http.server", "18999", "--directory", "/data"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:18999/dns.cedar'); urllib.request.urlopen('http://127.0.0.1:18999/labels.json')"]
+      interval: 1s
+      timeout: 2s
+      retries: 30
 
   integration-test-treetop-server:
-    image: ${TREETOP_REST_IMAGE:-ghcr.io/treetop-policy-engine/treetop-rest:v0.0.16}
+    image: ${TREETOP_REST_IMAGE:-ghcr.io/treetop-policy-engine/treetop-rest:v0.1.0}
     container_name: integration-test-treetop-server
-    pull_policy: "always"
+    pull_policy: "missing"
     ports:
       - "10101:9999"
     environment:
@@ -22,7 +25,8 @@ services:
       - TREETOP_POLICY_UPDATE_FREQUENCY=120
       - TREETOP_LABELS_UPDATE_FREQUENCY=120
     depends_on:
-      - integration-test-cedar-server
+      integration-test-cedar-server:
+        condition: service_healthy
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9999/api/v1/health"]
+      test: ["CMD", "curl", "-f", "http://localhost:9999/readyz"]
       interval: 2s

@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import enum
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime
 from functools import lru_cache
-from typing import ClassVar, Generic, Literal, NoReturn, TypeAlias, TypedDict, TypeVar, override
+from typing import Generic, Literal, NoReturn, TypeAlias, TypedDict, TypeVar, cast, override
 
 JsonPrimitive: TypeAlias = str | int | float | bool | None
 JsonObject: TypeAlias = dict[str, "JsonValue"]
@@ -24,7 +25,7 @@ def _expect_str(value: JsonValue | None, *, field_name: str) -> str:
 
 
 def _expect_int(value: JsonValue | None, *, field_name: str) -> int:
-    if isinstance(value, int):
+    if type(value) is int:
         return value
     raise ValueError(f"{field_name} must be an int, got {type(value).__name__}")
 
@@ -66,7 +67,6 @@ class Endpoint(enum.Enum):
     READYZ = "/readyz"
     OPENAPI = "/openapi.json"
     METRICS = "/metrics"
-    HEALTH = "/api/v1/health"
     VERSION = "/api/v1/version"
     STATUS = "/api/v1/status"
     POLICIES = "/api/v1/policies"
@@ -284,7 +284,7 @@ def _context_value_to_api(value: ContextValue | JsonValue) -> JsonObject:
         return {"type": "String", "value": value}
     if isinstance(value, bool):
         return {"type": "Bool", "value": value}
-    if isinstance(value, int):
+    if type(value) is int:
         return {
             "type": "Long",
             "value": _validate_i64(value, field_name="Long value"),
@@ -413,27 +413,19 @@ def as_api(obj: Request | JsonObject) -> JsonObject:
 @dataclass(slots=True, frozen=True)
 class AuthorizedResponseBrief:
     decision: Decision
-    policy_id: str = ""
-    version: PolicyVersion | None = None
+    policy_id: str
+    version: PolicyVersion
 
-    _KEYS: ClassVar[tuple[str, ...]] = ("decision",)
+    def __post_init__(self) -> None:
+        if (self.decision is Decision.ALLOW) != bool(self.policy_id):
+            raise ValueError("Allow requires a policy ID; Deny requires an empty ID")
 
     @classmethod
     def from_api(cls, data: JsonObject) -> AuthorizedResponseBrief:
-        dec = data.get("decision")
-        if dec is None:
-            dec = data.get("desicion")
-        if dec is None:
-            raise KeyError("decision")
-        decision = _expect_str(dec, field_name="decision")
-        policy_id = data.get("policy_id")
-        version = data.get("version")
         return cls(
-            decision=_decision_from_api(decision),
-            policy_id=_expect_str(policy_id, field_name="policy_id")
-            if policy_id is not None
-            else "",
-            version=_optional_policy_version(version),
+            decision=_decision_from_api(_expect_str(data.get("decision"), field_name="decision")),
+            policy_id=_expect_str(data.get("policy_id"), field_name="policy_id"),
+            version=PolicyVersion.from_api(_expect_dict(data.get("version"), field_name="version")),
         )
 
     def is_allowed(self) -> bool:
@@ -442,21 +434,21 @@ class AuthorizedResponseBrief:
     def is_denied(self) -> bool:
         return self.decision == Decision.DENY
 
-    def version_hash(self) -> str | None:
-        """Return the policy version hash if available, otherwise None."""
-        return self.version.hash if self.version else None
+    def version_hash(self) -> str:
+        """Return the required policy version hash."""
+        return self.version.hash
 
-    def version_loaded_at(self) -> datetime | None:
-        """Return the policy version loaded_at timestamp if available, otherwise None."""
-        return self.version.loaded_at if self.version else None
+    def version_loaded_at(self) -> datetime:
+        """Return the required policy load timestamp."""
+        return self.version.loaded_at
 
 
 @dataclass(slots=True, frozen=True)
 class PermitPolicy:
     literal: str
     json: JsonObject
+    cedar_id: str
     annotation_id: str | None = None
-    cedar_id: str | None = None
 
     @classmethod
     def from_api(cls, data: JsonObject) -> PermitPolicy:
@@ -465,7 +457,9 @@ class PermitPolicy:
         annotation_id = _expect_optional_str(
             data.get("annotation_id"), field_name="annotation_id"
         )
-        cedar_id = _expect_optional_str(data.get("cedar_id"), field_name="cedar_id")
+        cedar_id = _expect_str(data["cedar_id"], field_name="cedar_id")
+        if not literal or not cedar_id:
+            raise ValueError("permit policy requires a nonempty literal and Cedar ID")
         return cls(
             literal=literal,
             json=json_blob,
@@ -480,8 +474,8 @@ class PolicyVersion:
 
     hash: str
     loaded_at: datetime
-    label_set: str | None = None
-    generation: int = 0
+    label_set: str | None
+    generation: int
 
     def __post_init__(self) -> None:
         generation = self.generation
@@ -490,64 +484,44 @@ class PolicyVersion:
 
     @classmethod
     def from_api(cls, data: JsonObject) -> PolicyVersion:
-        hash_value = _expect_str(data.get("hash"), field_name="version hash")
-        loaded_at_value = _expect_str(data.get("loaded_at"), field_name="version loaded_at")
-        # Subclasses may add mutable state or constructor behavior.
-        if cls is not PolicyVersion:
-            if "label_set" not in data and "generation" not in data:
-                return cls(hash=hash_value, loaded_at=_datetime_from_api(loaded_at_value))
-            return cls(
-                hash=hash_value,
-                loaded_at=_datetime_from_api(loaded_at_value),
-                label_set=_expect_optional_str(data.get("label_set"), field_name="version label_set"),
-                generation=_expect_int(data.get("generation", 0), field_name="version generation"),
+        if cls is PolicyVersion:
+            return _policy_version_from_values(
+                data["hash"], data["loaded_at"], data["label_set"], data["generation"]
             )
-        if "label_set" not in data and "generation" not in data:
-            return _policy_version_from_values(cls, hash_value, loaded_at_value)
-        return _policy_version_from_values(
-            cls,
-            hash_value,
-            loaded_at_value,
-            _expect_optional_str(data.get("label_set"), field_name="version label_set"),
-            _expect_int(data.get("generation", 0), field_name="version generation"),
+        # Subclasses may add mutable state; construct them without interning.
+        return cls(
+            hash=_expect_str(data["hash"], field_name="version hash"),
+            loaded_at=_datetime_from_api(_expect_str(data["loaded_at"], field_name="version loaded_at")),
+            label_set=_expect_optional_str(data["label_set"], field_name="version label_set"),
+            generation=_expect_int(data["generation"], field_name="version generation"),
         )
 
 
-@lru_cache(maxsize=256, typed=True)
-def _policy_version_from_values(
-    cls: type[PolicyVersion],
-    hash_value: str,
-    loaded_at: str,
-    label_set: str | None = None,
-    generation: int = 0,
+def _parse_policy_version(
+    hash_value: JsonValue,
+    loaded_at: JsonValue,
+    label_set: JsonValue,
+    generation: JsonValue,
 ) -> PolicyVersion:
-    """Share immutable versions across repeated batch items, keyed by every field.
+    """Validate each distinct immutable wire version once in a bounded typed cache.
 
-    Typed keys keep booleans distinct from cached integer generations, so the
-    constructor always rejects them. Invalid constructions are never cached.
+    Typed keys distinguish bool from int. Every required field participates in
+    the key; invalid or unhashable inputs never produce a cached version.
     """
-    return cls(hash_value, _datetime_from_api(loaded_at), label_set, generation)
+    return PolicyVersion(
+        _expect_str(hash_value, field_name="version hash"),
+        _datetime_from_api(_expect_str(loaded_at, field_name="version loaded_at")),
+        _expect_optional_str(label_set, field_name="version label_set"),
+        _expect_int(generation, field_name="version generation"),
+    )
 
 
-def _optional_policy_version(blob: JsonValue | None) -> PolicyVersion | None:
-    if blob is None:
-        return None
-    return PolicyVersion.from_api(_expect_dict(blob, field_name="version"))
-
-
-def _permit_policies_from_api(
-    blob: JsonValue, *, context: str, decision_data: JsonObject
-) -> list[PermitPolicy]:
-    if isinstance(blob, list):
-        if not blob:
-            raise ValueError(f"{context} has empty policy list: {decision_data!r}")
-        return [
-            PermitPolicy.from_api(_expect_dict(entry, field_name="policy"))
-            for entry in blob
-        ]
-    if isinstance(blob, dict):
-        return [PermitPolicy.from_api(blob)]
-    raise ValueError(f"{context} has malformed policy: {blob!r}")
+# The wire boundary accepts arbitrary JSON: lru_cache rejects unhashable values,
+# and the parser rejects invalid scalar values before any result can be cached.
+_policy_version_from_values = cast(
+    Callable[[JsonValue, JsonValue, JsonValue, JsonValue], PolicyVersion],
+    lru_cache(maxsize=256, typed=True)(_parse_policy_version),
+)
 
 
 class PolicyMatchReason(str, enum.Enum):
@@ -625,11 +599,28 @@ class CoreVersion:
 
 
 @dataclass(slots=True, frozen=True)
+class SchemaVersion:
+    """Loaded schema revision; distinct from policy and label generations."""
+
+    hash: str
+    loaded_at: datetime
+
+    @classmethod
+    def from_api(cls, data: JsonObject) -> SchemaVersion:
+        return cls(
+            hash=_expect_str(data["hash"], field_name="schema hash"),
+            loaded_at=_datetime_from_api(
+                _expect_str(data["loaded_at"], field_name="schema loaded_at")
+            ),
+        )
+
+
+@dataclass(slots=True, frozen=True)
 class VersionResponse:
     version: str
     core: CoreVersion
     policies: PolicyVersion
-    schema: PolicyVersion | None = None
+    schema: SchemaVersion | None = None
 
     @classmethod
     def from_api(cls, data: JsonObject) -> VersionResponse:
@@ -640,7 +631,7 @@ class VersionResponse:
             policies=PolicyVersion.from_api(
                 _expect_dict(data.get("policies"), field_name="policies")
             ),
-            schema=PolicyVersion.from_api(
+            schema=SchemaVersion.from_api(
                 _expect_dict(schema_blob, field_name="schema")
             )
             if schema_blob is not None
@@ -656,7 +647,7 @@ class Metadata:
     source: JsonObject | None
     refresh_frequency: int | None
     entries: int
-    content: str | None = None
+    content: str
 
     @classmethod
     def from_api(cls, data: JsonObject) -> Metadata:
@@ -677,43 +668,26 @@ class Metadata:
             if refresh_frequency is not None
             else None,
             entries=_expect_int(data.get("entries"), field_name="entries"),
-            content=_expect_optional_str(data.get("content"), field_name="content"),
+            content=_expect_str(data["content"], field_name="content"),
         )
 
 
 @dataclass(slots=True, frozen=True)
 class PolicyConfiguration:
-    allow_upload: bool | None
-    schema_validation_mode: str | None
-    policies: Metadata | None
-    labels: Metadata | None
-    schema: Metadata | None
+    allow_upload: bool
+    schema_validation_mode: str
+    policies: Metadata
+    labels: Metadata
+    schema: Metadata
 
     @classmethod
     def from_api(cls, data: JsonObject) -> PolicyConfiguration:
-        allow_upload = data.get("allow_upload")
-        schema_validation_mode = data.get("schema_validation_mode")
-        policies = data.get("policies")
-        labels = data.get("labels")
-        schema = data.get("schema")
         return cls(
-            allow_upload=_expect_bool(allow_upload, field_name="allow_upload")
-            if allow_upload is not None
-            else None,
-            schema_validation_mode=_expect_str(
-                schema_validation_mode, field_name="schema_validation_mode"
-            )
-            if schema_validation_mode is not None
-            else None,
-            policies=Metadata.from_api(_expect_dict(policies, field_name="policies"))
-            if policies is not None
-            else None,
-            labels=Metadata.from_api(_expect_dict(labels, field_name="labels"))
-            if labels is not None
-            else None,
-            schema=Metadata.from_api(_expect_dict(schema, field_name="schema"))
-            if schema is not None
-            else None,
+            allow_upload=_expect_bool(data.get("allow_upload"), field_name="allow_upload"),
+            schema_validation_mode=_expect_str(data.get("schema_validation_mode"), field_name="schema_validation_mode"),
+            policies=Metadata.from_api(_expect_dict(data.get("policies"), field_name="policies")),
+            labels=Metadata.from_api(_expect_dict(data.get("labels"), field_name="labels")),
+            schema=Metadata.from_api(_expect_dict(data.get("schema"), field_name="schema")),
         )
 
 
@@ -747,7 +721,7 @@ class RequestLimits:
     max_context_bytes: int
     max_context_depth: int
     max_context_keys: int
-    max_batch_size: int | None = None
+    max_batch_size: int
 
     @classmethod
     def from_api(cls, data: JsonObject) -> RequestLimits:
@@ -763,9 +737,7 @@ class RequestLimits:
             ),
             max_batch_size=_expect_int(
                 data.get("max_batch_size"), field_name="max_batch_size"
-            )
-            if data.get("max_batch_size") is not None
-            else None,
+            ),
         )
 
 
@@ -823,66 +795,19 @@ class AuthorizedResponseDetailed:
     # Either decision == Decision.DENY (empty policies list) or Decision.ALLOW with policies
     decision: Decision
     policies: list[PermitPolicy]
-    version: PolicyVersion | None = None
+    version: PolicyVersion
 
     @classmethod
     def from_api(cls, data: JsonObject) -> AuthorizedResponseDetailed:
-        dec = data.get("decision")
-        if dec is None:
-            dec = data.get("desicion")  # Temporary typo support
-        if dec is None:
-            raise KeyError("decision")
-
-        if isinstance(dec, str):
-            # 1) Is it a simple Deny (old format)?
-            if dec == "Deny":
-                version = _optional_policy_version(data.get("version"))
-                return cls(decision=Decision.DENY, policies=[], version=version)
-
-            # 1b) Is it a simple Allow with top-level policy/version?
-            if dec == "Allow":
-                if "policy" not in data:
-                    raise ValueError(f"Allow decision missing policy: {data!r}")
-                policies = _permit_policies_from_api(
-                    data["policy"], context="Allow decision", decision_data=data
-                )
-                version = _optional_policy_version(data.get("version"))
-                return cls(
-                    decision=Decision.ALLOW,
-                    policies=policies,
-                    version=version,
-                )
-            raise ValueError(f"Unrecognized decision value: {dec!r}")
-
-        # 2) Is it a Deny with version (new format)?
-        if isinstance(dec, dict) and "Deny" in dec:
-            deny_dict = _expect_dict(dec["Deny"], field_name="deny decision")
-            version = _optional_policy_version(deny_dict.get("version"))
-            return cls(
-                decision=Decision.DENY,
-                policies=[],
-                version=version,
-            )
-
-        # 3) If it's a dict with an "Allow" key, pull the policies and optional version
-        if isinstance(dec, dict) and "Allow" in dec:
-            allow_dict = _expect_dict(dec["Allow"], field_name="allow decision")
-
-            if "policy" not in allow_dict:
-                raise ValueError(f"Allow decision missing policy: {dec!r}")
-
-            policies = _permit_policies_from_api(
-                allow_dict["policy"], context="Allow decision", decision_data=data
-            )
-            version = _optional_policy_version(allow_dict.get("version"))
-            return cls(
-                decision=Decision.ALLOW,
-                policies=policies,
-                version=version,
-            )
-
-        # 4) Otherwise it's malformed
-        raise ValueError(f"Unrecognized decision shape: {dec!r}")
+        decision = _decision_from_api(_expect_str(data.get("decision"), field_name="decision"))
+        policies = _expect_list(data.get("policy"), field_name="policy")
+        if (decision is Decision.ALLOW) != bool(policies):
+            raise ValueError("Allow requires permit policies; Deny requires an empty array")
+        return cls(
+            decision=decision,
+            policies=[PermitPolicy.from_api(_expect_dict(policy, field_name="policy")) for policy in policies],
+            version=PolicyVersion.from_api(_expect_dict(data.get("version"), field_name="version")),
+        )
 
     def is_allowed(self) -> bool:
         return self.decision == Decision.ALLOW
@@ -902,13 +827,13 @@ class AuthorizedResponseDetailed:
         """Return a matching policy by index."""
         return self.policies[index]
 
-    def version_hash(self) -> str | None:
-        """Return the policy version hash if available, otherwise None."""
-        return self.version.hash if self.version else None
+    def version_hash(self) -> str:
+        """Return the required policy version hash."""
+        return self.version.hash
 
-    def version_loaded_at(self) -> datetime | None:
-        """Return the policy version loaded_at timestamp if available, otherwise None."""
-        return self.version.loaded_at if self.version else None
+    def version_loaded_at(self) -> datetime:
+        """Return the required policy load timestamp."""
+        return self.version.loaded_at
 
 
 # Generic type variables for authorization results and responses
@@ -934,6 +859,11 @@ def _authorize_result_fields(
     error = (
         _expect_str(error_blob, field_name="error") if error_blob is not None else None
     )
+    if status == "success":
+        if "result" not in data or error is not None:
+            raise ValueError("successful result requires a decision and no error")
+    elif status != "failed" or "result" in data or error is None:
+        raise ValueError("failed result requires an error and no decision")
     return index, result_id, status, error
 
 
@@ -1034,6 +964,23 @@ class AuthorizeResponseBase(Generic[T]):
     successful: int
     failed: int
 
+    def __post_init__(self) -> None:
+        successful = 0
+        for index, item in enumerate(self.results):
+            if item.index != index:
+                raise ValueError("batch result indices must match their positions")
+            if item.status == "success":
+                result = item.result
+                if result is None or item.error is not None:
+                    raise ValueError("successful result requires a decision and no error")
+                if result.version is not self.version and result.version != self.version:
+                    raise ValueError("batch and item policy versions must match")
+                successful += 1
+            elif item.status != "failed" or item.result is not None or item.error is None:
+                raise ValueError("failed result requires an error and no decision")
+        if self.successful != successful or self.failed != len(self.results) - successful:
+            raise ValueError("batch result counts must match the returned results")
+
     def __iter__(self):
         """Iterate over results."""
         return iter(self.results)
@@ -1045,6 +992,14 @@ class AuthorizeResponseBase(Generic[T]):
     def __getitem__(self, index: int) -> T:
         """Get result by index."""
         return self.results[index]
+
+    def validate_requests(self, requests: list[JsonObject]) -> None:
+        """Require exactly one corresponding result for every submitted request."""
+        if len(self.results) != len(requests):
+            raise ValueError("response result count differs from the submitted batch")
+        for item, request in zip(self.results, requests, strict=True):
+            if item.id != request.get("id"):
+                raise ValueError("response result ID differs from the submitted request")
 
     def get_by_id(self, request_id: str) -> T | None:
         """Get result by client-provided request ID."""
@@ -1074,12 +1029,12 @@ class AuthorizeResponseBase(Generic[T]):
         )
 
     def all_allowed(self) -> bool:
-        """Check if all successful results are allowed."""
-        return all(
-            result.result is not None
+        """Require a nonempty batch in which every result succeeded and allowed."""
+        return bool(self.results) and all(
+            result.status == "success"
+            and result.result is not None
             and result.result.decision is Decision.ALLOW
             for result in self.results
-            if result.status == "success"
         )
 
 
@@ -1098,10 +1053,10 @@ class AuthorizeResponseBrief(AuthorizeResponseBase[AuthorizeResultBrief]):
                 for entry in results_blob
             ]
         else:
-            results = []
+            raise ValueError("results must be an array")
         version = PolicyVersion.from_api(_expect_dict(data.get("version"), field_name="version"))
-        successful = _expect_int(data.get("successful", 0), field_name="successful")
-        failed = _expect_int(data.get("failed", 0), field_name="failed")
+        successful = _expect_int(data.get("successful"), field_name="successful")
+        failed = _expect_int(data.get("failed"), field_name="failed")
 
         return cls(
             results=results, version=version, successful=successful, failed=failed
@@ -1123,10 +1078,10 @@ class AuthorizeResponseDetailed(AuthorizeResponseBase[AuthorizeResultDetailed]):
                 for entry in results_blob
             ]
         else:
-            results = []
+            raise ValueError("results must be an array")
         version = PolicyVersion.from_api(_expect_dict(data.get("version"), field_name="version"))
-        successful = _expect_int(data.get("successful", 0), field_name="successful")
-        failed = _expect_int(data.get("failed", 0), field_name="failed")
+        successful = _expect_int(data.get("successful"), field_name="successful")
+        failed = _expect_int(data.get("failed"), field_name="failed")
 
         return cls(
             results=results, version=version, successful=successful, failed=failed

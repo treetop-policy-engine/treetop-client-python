@@ -43,8 +43,7 @@ def _request(index: int) -> Request:
 REQUESTS = [_request(index) for index in range(128)]
 VERSION: JsonObject = {
     "hash": "c82d116854d77bf689c3d15e167764876dffe869c970bc08ab7c5dacd7726219",
-    "loaded_at": "2025-12-19T00:14:38.577289000Z",
-}
+    "loaded_at": "2025-12-19T00:14:38.577289000Z", "label_set": None, "generation": 0}
 BRIEF_RESPONSE: JsonObject = {
     "results": [
         {

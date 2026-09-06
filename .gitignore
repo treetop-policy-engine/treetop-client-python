@@ -6,3 +6,5 @@ __pycache__/
 .uv-cache/
 .venv/
 dist/
+
+.candidate-rest/

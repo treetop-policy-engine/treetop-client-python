@@ -10,12 +10,11 @@ Python ≥ 3.12, zero runtime deps beyond HTTPX.
 
 - **Unified Batch Authorization Endpoint**: Process multiple authorization requests in a single API call
 - **Detail Levels**: Control response verbosity (brief vs. detailed with policy information)
-- **Backward Compatible**: Existing code using `check()` and `check_detailed()` continues to work seamlessly
 - **Full Async Support**: Async/await support for all API methods
 - **Type Safe**: Fully type-hinted dataclasses for requests and responses
 - **Version Tracking**: Access policy version information (hash and loaded_at timestamp)
-- **Treetop REST v0.0.16**: Complete policy versions, operational probes, generated OpenAPI, metrics,
-  status, policy, and schema endpoints. Integration tests also retain v0.0.12 compatibility.
+- **Treetop REST 0.1.0**: One strict contract with complete state versions and operational metadata.
+  This is a breaking release; see [MIGRATION.md](MIGRATION.md).
 - **Request Context**: Pass request-scoped Cedar context attributes during authorization
 
 ## Basic Usage (Single Request)
@@ -44,8 +43,10 @@ req = Request(
     resource=Resource.new("Host", id="myhost", attrs=attrs)
 )
 
-# Use the check method (wraps batch API internally)
-resp = client.check(req)
+# A single request uses the same batch API
+response = client.authorize(req)
+resp = response.results[0].result
+assert resp is not None
 
 # Use is_allowed() / is_denied() methods
 assert resp.is_allowed()
@@ -125,7 +126,9 @@ req = Request(
 )
 
 # Get detailed response with policy information
-resp = client.check_detailed(req)
+response = client.authorize_detailed(req)
+resp = response.results[0].result
+assert resp is not None
 assert resp.is_allowed()
 assert resp.decision == Decision.ALLOW
 
@@ -139,8 +142,8 @@ if policies:
     print(f"Cedar IDs: {[p.cedar_id for p in policies if p.cedar_id]}")
 
 # Access version information
-hash = resp.version_hash()           # SHA-256 hash or None
-loaded_at = resp.version_loaded_at() # datetime or None
+hash = resp.version_hash()           # SHA-256 hash
+loaded_at = resp.version_loaded_at() # datetime
 ```
 
 ## Batch Detailed Responses
@@ -173,7 +176,9 @@ All methods have async versions:
 
 ```python
 # Single request (async)
-resp = await client.acheck(req)
+response = await client.aauthorize(req)
+resp = response.results[0].result
+assert resp is not None
 
 # Batch requests (async)
 response = await client.aauthorize(requests)
@@ -210,7 +215,7 @@ req = Request(
 )
 
 # Pass correlation ID for tracing
-resp = client.check(req, correlation_id="my-correlation-id")
+response = client.authorize(req, correlation_id="my-correlation-id")
 response = client.authorize([req1, req2], correlation_id="batch-trace-id")
 ```
 
@@ -246,7 +251,7 @@ Strings, booleans, integers, and lists are encoded as Cedar `String`, `Bool`,
 ## Server Metadata and Uploads
 
 ```python
-assert client.health()
+assert client.livez()
 
 version = client.version()
 print(version.version, version.core.version, version.policies.hash)

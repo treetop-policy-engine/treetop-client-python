@@ -216,11 +216,10 @@ def test_detailed_response_current_full_shape():
     resp = AuthorizedResponseDetailed.from_api(
         {
             "decision": "Allow",
-            "policy": [{"literal": "permit (...);", "json": {"effect": "permit"}}],
+            "policy": [{"literal": "permit (...);", "json": {"effect": "permit"}, "cedar_id": "policy0"}],
             "version": {
                 "hash": "abc123",
-                "loaded_at": "2025-12-19T00:14:38.577289000Z",
-            },
+                "loaded_at": "2025-12-19T00:14:38.577289000Z", "label_set": None, "generation": 0},
         }
     )
 
@@ -234,8 +233,7 @@ def test_detailed_response_current_full_shape():
 def test_policy_version_retains_complete_state(label_set: str | None, generation: int):
     wire: JsonObject = {
         "hash": "abc", "loaded_at": "2026-09-05T00:00:00Z",
-        "label_set": label_set, "generation": generation,
-    }
+        "label_set": label_set, "generation": generation}
     version = PolicyVersion.from_api(wire)
     assert version.label_set == label_set
     assert version.generation == generation
@@ -243,29 +241,29 @@ def test_policy_version_retains_complete_state(label_set: str | None, generation
     changed: JsonObject = dict(wire, generation=(generation + 1) % (1 << 64))
     assert version != PolicyVersion.from_api(changed)
     for response_type in [AuthorizedResponseBrief, AuthorizedResponseDetailed]:
-        response = response_type.from_api({"decision": "Deny", "policy": [], "version": wire})
+        response = response_type.from_api({"decision": "Deny", "policy": [], "policy_id": "", "version": wire})
         assert response.version == version
 
 
-def test_policy_version_defaults_for_older_servers():
-    version = PolicyVersion.from_api({"hash": "abc", "loaded_at": "2026-09-05T00:00:00Z"})
-    assert version.label_set is None
-    assert version.generation == 0
+@pytest.mark.parametrize("field", ["hash", "loaded_at", "label_set", "generation"])
+def test_policy_version_requires_every_current_field(field: str):
+    wire: JsonObject = {"hash":"h", "loaded_at":"2026-09-05T00:00:00Z", "label_set":None, "generation":0}
+    del wire[field]
+    with pytest.raises((KeyError, ValueError), match=field):
+        _ = PolicyVersion.from_api(wire)
 
 
 @pytest.mark.parametrize("generation", [-1, 1 << 64, True, False, 1.5, "1", None])
 def test_policy_version_rejects_invalid_generation(generation: JsonValue):
     with pytest.raises((TypeError, ValueError), match="generation"):
         _ = PolicyVersion.from_api({
-            "hash": "abc", "loaded_at": "2026-09-05T00:00:00Z", "generation": generation,
-        })
+            "hash": "abc", "loaded_at": "2026-09-05T00:00:00Z", "generation": generation, "label_set": None})
 
 
 def test_cached_versions_do_not_conflate_generation_types_or_state():
     wire: JsonObject = {
         "hash": "cached", "loaded_at": "2026-09-05T00:00:00Z",
-        "label_set": "labels-v1", "generation": 0,
-    }
+        "label_set": "labels-v1", "generation": 0}
     original = PolicyVersion.from_api(wire)
     assert original == PolicyVersion.from_api(dict(wire))
     for field, value in [("label_set", "labels-v2"), ("generation", 1),
@@ -279,8 +277,8 @@ def test_cached_versions_do_not_conflate_generation_types_or_state():
             _ = PolicyVersion.from_api(invalid)
 
 
-@pytest.mark.parametrize("modern_metadata", [False, True])
-def test_policy_version_subclasses_are_constructed_independently(modern_metadata: bool):
+@pytest.mark.parametrize("identified_labels", [False, True])
+def test_policy_version_subclasses_are_constructed_independently(identified_labels: bool):
     constructed: list[str] = []
 
     class CustomPolicyVersion(PolicyVersion):
@@ -288,8 +286,8 @@ def test_policy_version_subclasses_are_constructed_independently(modern_metadata
             super().__post_init__()
             constructed.append(self.hash)
 
-    wire: JsonObject = {"hash": "custom", "loaded_at": "2026-09-05T00:00:00Z"}
-    if modern_metadata:
+    wire: JsonObject = {"hash": "custom", "loaded_at": "2026-09-05T00:00:00Z", "label_set": None, "generation": 0}
+    if identified_labels:
         wire.update({"label_set": "labels-v1", "generation": 7})
     first = CustomPolicyVersion.from_api(wire)
     second = CustomPolicyVersion.from_api(wire)
@@ -299,22 +297,8 @@ def test_policy_version_subclasses_are_constructed_independently(modern_metadata
     assert constructed == ["custom", "custom"]
 
 
-def test_policy_version_preserves_legacy_keyword_only_constructor():
-    class LegacyVersion(PolicyVersion):
-        def __init__(self, *, hash: str, loaded_at: datetime):
-            super().__init__(hash=hash, loaded_at=loaded_at)
 
-    wire: JsonObject = {"hash": "legacy", "loaded_at": "2026-09-05T00:00:00Z"}
-    first = LegacyVersion.from_api(wire)
-    second = LegacyVersion.from_api(wire)
-    assert isinstance(first, LegacyVersion)
-    assert first.hash == "legacy"
-    assert first.generation == 0
-    assert first == second
-    assert first is not second
-
-
-def test_policy_version_passes_modern_metadata_as_keywords():
+def test_policy_version_passes_identified_labels_as_keywords():
     class KeywordVersion(PolicyVersion):
         def __init__(self, *, hash: str, loaded_at: datetime,
                      label_set: str | None = None, generation: int = 0):
@@ -327,3 +311,57 @@ def test_policy_version_passes_modern_metadata_as_keywords():
     assert isinstance(version, KeywordVersion)
     assert version.label_set == "labels"
     assert version.generation == 7
+
+
+@pytest.mark.parametrize("decision", [{"Allow":{"policy":[]}}, {"Deny":{}}, None])
+def test_old_decision_shapes_and_typo_alias_are_rejected(decision: JsonValue):
+    wire: JsonObject = {"decision":decision, "desicion":"Allow", "policy_id":"p", "policy":[],
+                        "version":{"hash":"h","loaded_at":"2026-09-05T00:00:00Z","label_set":None,"generation":0}}
+    for response_type in [AuthorizedResponseBrief, AuthorizedResponseDetailed]:
+        with pytest.raises(ValueError, match="decision"):
+            _ = response_type.from_api(wire)
+
+
+@pytest.mark.parametrize("field,value", [("successful",0), ("failed",1), ("index",1), ("generation",1)])
+def test_batch_rejects_inconsistent_current_metadata(field: str, value: int):
+    from treetop_client.models import AuthorizeResponseBrief
+    version: JsonObject = {"hash":"h","loaded_at":"2026-09-05T00:00:00Z","label_set":None,"generation":0}
+    result_version: JsonObject = dict(version)
+    entry: JsonObject = {"index":0,"status":"success","result":{"decision":"Allow","policy_id":"p","version":result_version}}
+    batch: JsonObject = {"results":[entry],"version":version,"successful":1,"failed":0}
+    if field == "index":
+        entry[field] = value
+    elif field == "generation":
+        result_version[field] = value
+    else:
+        batch[field] = value
+    with pytest.raises(ValueError, match="batch"):
+        _ = AuthorizeResponseBrief.from_api(batch)
+
+
+def test_all_allowed_rejects_empty_and_failed_batches():
+    from treetop_client.models import AuthorizeResponseBrief
+    version: JsonObject = {"hash":"h","loaded_at":"2026-09-05T00:00:00Z","label_set":None,"generation":0}
+    empty = AuthorizeResponseBrief.from_api({"results":[],"version":version,"successful":0,"failed":0})
+    failed = AuthorizeResponseBrief.from_api({"results":[{"index":0,"status":"failed","error":"evaluation failed"}],"version":version,"successful":0,"failed":1})
+    assert not empty.all_allowed()
+    assert not failed.all_allowed()
+
+
+def test_schema_revision_is_distinct_from_authorization_generation():
+    from treetop_client.models import SchemaVersion
+
+    revision = SchemaVersion.from_api({"hash": "schema", "loaded_at": "2026-09-06T00:00:00Z"})
+    assert revision.hash == "schema"
+    for missing in ["hash", "loaded_at"]:
+        data: JsonObject = {"hash": "schema", "loaded_at": "2026-09-06T00:00:00Z"}
+        del data[missing]
+        with pytest.raises(KeyError):
+            _ = SchemaVersion.from_api(data)
+
+
+@pytest.mark.parametrize("decision,policy_id", [("Allow", ""), ("Deny", "permit")])
+def test_brief_decision_rejects_inconsistent_policy_id(decision: str, policy_id: str):
+    with pytest.raises(ValueError):
+        _ = AuthorizedResponseBrief.from_api({"decision": decision, "policy_id": policy_id,
+            "version": {"hash":"h", "loaded_at":"2026-09-06T00:00:00Z", "label_set":None, "generation":0}})

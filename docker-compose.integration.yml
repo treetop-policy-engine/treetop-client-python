@@ -8,9 +8,9 @@ services:
     command: ["/data", "--port", "18999"]
 
   integration-test-treetop-server:
-    image: ${TREETOP_REST_IMAGE:-ghcr.io/treetop-policy-engine/treetop-rest:v0.0.16}
+    image: ${TREETOP_REST_IMAGE:-ghcr.io/treetop-policy-engine/treetop-rest:v0.1.0}
     container_name: integration-test-treetop-server
-    pull_policy: "always"
+    pull_policy: "missing"
     ports:
       - "10101:9999"
     environment:
@@ -24,5 +24,5 @@ services:
     depends_on:
       - integration-test-cedar-server
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9999/api/v1/health"]
+      test: ["CMD", "curl", "-f", "http://localhost:9999/readyz"]
       interval: 2s

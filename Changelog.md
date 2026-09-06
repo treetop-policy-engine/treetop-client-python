@@ -19,7 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   cache keyed by all version fields and runtime types. Avoid repeated default-field
   parsing for older responses; boolean generations cannot alias cached integers.
   Custom subclasses remain uncached so their constructors and independent state
-  retain their existing behavior.
+  retain their existing behavior, including keyword-only and legacy constructors.
 
 ## [0.0.12] - 2026-08-14
 

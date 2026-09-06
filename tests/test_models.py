@@ -1,3 +1,4 @@
+from datetime import datetime
 from typing import cast
 
 import pytest
@@ -296,3 +297,33 @@ def test_policy_version_subclasses_are_constructed_independently(modern_metadata
     assert first == second
     assert first is not second
     assert constructed == ["custom", "custom"]
+
+
+def test_policy_version_preserves_legacy_keyword_only_constructor():
+    class LegacyVersion(PolicyVersion):
+        def __init__(self, *, hash: str, loaded_at: datetime):
+            super().__init__(hash=hash, loaded_at=loaded_at)
+
+    wire: JsonObject = {"hash": "legacy", "loaded_at": "2026-09-05T00:00:00Z"}
+    first = LegacyVersion.from_api(wire)
+    second = LegacyVersion.from_api(wire)
+    assert isinstance(first, LegacyVersion)
+    assert first.hash == "legacy"
+    assert first.generation == 0
+    assert first == second
+    assert first is not second
+
+
+def test_policy_version_passes_modern_metadata_as_keywords():
+    class KeywordVersion(PolicyVersion):
+        def __init__(self, *, hash: str, loaded_at: datetime,
+                     label_set: str | None = None, generation: int = 0):
+            super().__init__(hash=hash, loaded_at=loaded_at,
+                             label_set=label_set, generation=generation)
+
+    wire: JsonObject = {"hash": "modern", "loaded_at": "2026-09-05T00:00:00Z",
+                        "label_set": "labels", "generation": 7}
+    version = KeywordVersion.from_api(wire)
+    assert isinstance(version, KeywordVersion)
+    assert version.label_set == "labels"
+    assert version.generation == 7

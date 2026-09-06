@@ -494,11 +494,13 @@ class PolicyVersion:
         loaded_at_value = _expect_str(data.get("loaded_at"), field_name="version loaded_at")
         # Subclasses may add mutable state or constructor behavior.
         if cls is not PolicyVersion:
+            if "label_set" not in data and "generation" not in data:
+                return cls(hash=hash_value, loaded_at=_datetime_from_api(loaded_at_value))
             return cls(
-                hash_value,
-                _datetime_from_api(loaded_at_value),
-                _expect_optional_str(data.get("label_set"), field_name="version label_set"),
-                _expect_int(data.get("generation", 0), field_name="version generation"),
+                hash=hash_value,
+                loaded_at=_datetime_from_api(loaded_at_value),
+                label_set=_expect_optional_str(data.get("label_set"), field_name="version label_set"),
+                generation=_expect_int(data.get("generation", 0), field_name="version generation"),
             )
         if "label_set" not in data and "generation" not in data:
             return _policy_version_from_values(cls, hash_value, loaded_at_value)

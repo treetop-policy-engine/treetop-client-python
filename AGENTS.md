@@ -11,7 +11,7 @@ subclass construction uncached. Preserve client transport and token protections.
 
 Run `pytest -m "not integration"`, `pyright`, `basedpyright`, and
 `pytest benchmarks`. Run the full integration suite against the exact coordinated
-REST candidate for wire changes. An unavailable or unready integration service
+REST release for wire changes. An unavailable or unready integration service
 must fail, not silently skip. Run `uv build` and inspect wheel/sdist contents for
 package changes. Review performance in CodSpeed without weakening its checks.
 

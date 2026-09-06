@@ -40,9 +40,8 @@ and re-sign them. Format 1 and old label syntax are rejected.
 
 ## Coordinated verification
 
-CI builds an immutable REST candidate and runs the full integration suite. After
-approval, release Core, Bundle, and REST before Python 0.1.0. No merge, tag, or
-publication is authorized by preparing this candidate.
+CI runs the full integration suite against the immutable REST 0.1.0 release image
+pinned in its workflow. Release Core, Bundle, and REST before Python 0.1.0.
 
 Schema revisions use `SchemaVersion` with required `hash` and `loaded_at`,
 separately from policy/label generations. REST and Core version strings are

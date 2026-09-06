@@ -14,7 +14,8 @@ Python ≥ 3.12, zero runtime deps beyond HTTPX.
 - **Full Async Support**: Async/await support for all API methods
 - **Type Safe**: Fully type-hinted dataclasses for requests and responses
 - **Version Tracking**: Access policy version information (hash and loaded_at timestamp)
-- **Treetop REST v0.0.12**: Operational probes, generated OpenAPI, metrics, status, policy, and schema endpoints
+- **Treetop REST v0.0.16**: Complete policy versions, operational probes, generated OpenAPI, metrics,
+  status, policy, and schema endpoints. Integration tests also retain v0.0.12 compatibility.
 - **Request Context**: Pass request-scoped Cedar context attributes during authorization
 
 ## Basic Usage (Single Request)
@@ -254,7 +255,7 @@ status = client.status()
 print(status.request_context.supported)
 print(status.request_limits.max_batch_size)
 
-# v0.0.12-compatible operational and discovery endpoints
+# Operational and discovery endpoints supported by both tested server releases
 assert client.livez()
 assert client.readyz()
 openapi = client.openapi()
@@ -318,3 +319,10 @@ equivalent to instruction-counted `iai-callgrind`: pull requests get stable
 regression comparisons, history, and profiles without relying on noisy hosted-runner
 wall time. Import the repository into CodSpeed once to enable result uploads; the
 workflow authenticates with GitHub OIDC and does not require a long-lived token.
+
+### Authorization state versions
+
+`PolicyVersion` includes `hash`, `loaded_at`, nullable `label_set`, and
+`generation`. The label identifier correlates configurations across engine
+replacements; generation is local to an engine instance and can restart.
+Older servers that omit the new fields default to `None` and `0`.

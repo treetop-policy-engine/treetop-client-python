@@ -1,3 +1,4 @@
+from datetime import datetime
 from typing import cast
 
 import pytest
@@ -5,11 +6,14 @@ import pytest
 from treetop_client.models import (
     Action,
     AuthorizedResponseDetailed,
+    AuthorizedResponseBrief,
     ContextValue,
     Decision,
     Group,
     JsonObject,
     QualifiedId,
+    PolicyVersion,
+    JsonValue,
     Request,
     Resource,
     ResourceAttribute,
@@ -223,3 +227,103 @@ def test_detailed_response_current_full_shape():
     assert resp.decision == Decision.ALLOW
     assert resp.version_hash() == "abc123"
     assert resp.policies[0].literal == "permit (...);"
+
+
+@pytest.mark.parametrize("label_set", [None, "labels-v2"])
+@pytest.mark.parametrize("generation", [0, 7, (1 << 64) - 1])
+def test_policy_version_retains_complete_state(label_set: str | None, generation: int):
+    wire: JsonObject = {
+        "hash": "abc", "loaded_at": "2026-09-05T00:00:00Z",
+        "label_set": label_set, "generation": generation,
+    }
+    version = PolicyVersion.from_api(wire)
+    assert version.label_set == label_set
+    assert version.generation == generation
+    assert version == PolicyVersion.from_api(wire)
+    changed: JsonObject = dict(wire, generation=(generation + 1) % (1 << 64))
+    assert version != PolicyVersion.from_api(changed)
+    for response_type in [AuthorizedResponseBrief, AuthorizedResponseDetailed]:
+        response = response_type.from_api({"decision": "Deny", "policy": [], "version": wire})
+        assert response.version == version
+
+
+def test_policy_version_defaults_for_older_servers():
+    version = PolicyVersion.from_api({"hash": "abc", "loaded_at": "2026-09-05T00:00:00Z"})
+    assert version.label_set is None
+    assert version.generation == 0
+
+
+@pytest.mark.parametrize("generation", [-1, 1 << 64, True, False, 1.5, "1", None])
+def test_policy_version_rejects_invalid_generation(generation: JsonValue):
+    with pytest.raises((TypeError, ValueError), match="generation"):
+        _ = PolicyVersion.from_api({
+            "hash": "abc", "loaded_at": "2026-09-05T00:00:00Z", "generation": generation,
+        })
+
+
+def test_cached_versions_do_not_conflate_generation_types_or_state():
+    wire: JsonObject = {
+        "hash": "cached", "loaded_at": "2026-09-05T00:00:00Z",
+        "label_set": "labels-v1", "generation": 0,
+    }
+    original = PolicyVersion.from_api(wire)
+    assert original == PolicyVersion.from_api(dict(wire))
+    for field, value in [("label_set", "labels-v2"), ("generation", 1),
+                         ("hash", "different"), ("loaded_at", "2026-09-06T00:00:00Z")]:
+        changed: JsonObject = dict(wire)
+        changed[field] = value
+        assert PolicyVersion.from_api(changed) != original
+    for generation in [False, True]:
+        invalid: JsonObject = dict(wire, generation=generation)
+        with pytest.raises(ValueError, match="generation"):
+            _ = PolicyVersion.from_api(invalid)
+
+
+@pytest.mark.parametrize("modern_metadata", [False, True])
+def test_policy_version_subclasses_are_constructed_independently(modern_metadata: bool):
+    constructed: list[str] = []
+
+    class CustomPolicyVersion(PolicyVersion):
+        def __post_init__(self) -> None:
+            super().__post_init__()
+            constructed.append(self.hash)
+
+    wire: JsonObject = {"hash": "custom", "loaded_at": "2026-09-05T00:00:00Z"}
+    if modern_metadata:
+        wire.update({"label_set": "labels-v1", "generation": 7})
+    first = CustomPolicyVersion.from_api(wire)
+    second = CustomPolicyVersion.from_api(wire)
+    assert isinstance(first, CustomPolicyVersion)
+    assert first == second
+    assert first is not second
+    assert constructed == ["custom", "custom"]
+
+
+def test_policy_version_preserves_legacy_keyword_only_constructor():
+    class LegacyVersion(PolicyVersion):
+        def __init__(self, *, hash: str, loaded_at: datetime):
+            super().__init__(hash=hash, loaded_at=loaded_at)
+
+    wire: JsonObject = {"hash": "legacy", "loaded_at": "2026-09-05T00:00:00Z"}
+    first = LegacyVersion.from_api(wire)
+    second = LegacyVersion.from_api(wire)
+    assert isinstance(first, LegacyVersion)
+    assert first.hash == "legacy"
+    assert first.generation == 0
+    assert first == second
+    assert first is not second
+
+
+def test_policy_version_passes_modern_metadata_as_keywords():
+    class KeywordVersion(PolicyVersion):
+        def __init__(self, *, hash: str, loaded_at: datetime,
+                     label_set: str | None = None, generation: int = 0):
+            super().__init__(hash=hash, loaded_at=loaded_at,
+                             label_set=label_set, generation=generation)
+
+    wire: JsonObject = {"hash": "modern", "loaded_at": "2026-09-05T00:00:00Z",
+                        "label_set": "labels", "generation": 7}
+    version = KeywordVersion.from_api(wire)
+    assert isinstance(version, KeywordVersion)
+    assert version.label_set == "labels"
+    assert version.generation == 7

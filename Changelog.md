@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Exercise the full integration suite against REST v0.0.16 and v0.0.12, including
+  the label-configuration identifier from the current server.
+- Retain nullable `label_set` and unsigned 64-bit `generation` in `PolicyVersion`
+  and authorization/version response parsing. Older servers default to `None`
+  and `0`; model equality now includes both state dimensions. Invalid generations,
+  including booleans, are rejected.
+- Reuse immutable parsed policy versions across batch items with a bounded 256-entry
+  cache keyed by all version fields and runtime types. Avoid repeated default-field
+  parsing for older responses; boolean generations cannot alias cached integers.
+  Custom subclasses remain uncached so their constructors and independent state
+  retain their existing behavior, including keyword-only and legacy constructors.
+
 ## [0.0.12] - 2026-08-14
 
 ### Changed

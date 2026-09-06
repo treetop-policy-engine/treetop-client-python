@@ -3,7 +3,6 @@ import re
 import subprocess
 import time
 from pathlib import Path
-from typing import cast
 
 import httpx
 import pytest
@@ -143,36 +142,30 @@ def docker_compose_up_down(tmp_path_factory: pytest.TempPathFactory):
         yield
         return
 
-    # bring up
     _ = tmp_path_factory
-    _ = subprocess.check_call(
-        ["docker", "compose", "-f", "docker-compose.integration.yml", "up", "-d"]
-    )
-    # wait for the server to be ready
-    for _ in range(10):
-        try:
-            resp = httpx.get(f"http://localhost:{PORT}/api/v1/policies", timeout=1.0)
-            if resp.status_code == 200:
-                payload = cast(dict[str, object], resp.json())
-                policies = payload.get("policies")
-                entries = 0
-                if isinstance(policies, dict):
-                    policies_dict = cast(dict[str, object], policies)
-                    entries_val = policies_dict.get("entries", 0)
-                    entries = entries_val if isinstance(entries_val, int) else 0
-                if entries:
-                    break
-                else:
-                    time.sleep(1)
-        except Exception:
-            time.sleep(1)
-    else:
-        pytest.fail("policy-server did not start in time")
-    yield
-    # tear down
-    _ = subprocess.call(
-        ["docker", "compose", "-f", "docker-compose.integration.yml", "down"]
-    )
+    compose = ["docker", "compose", "-f", "docker-compose.integration.yml"]
+    try:
+        _ = subprocess.check_call([*compose, "up", "-d"], timeout=60)
+        deadline = time.monotonic() + 60
+        while time.monotonic() < deadline:
+            try:
+                resp = httpx.get(f"http://localhost:{PORT}/api/v1/status", timeout=1.0)
+                if resp.status_code == 200:
+                    status = TreeTopClient(base_url=f"http://localhost:{PORT}")
+                    try:
+                        configuration = status.status().policy_configuration
+                        if configuration.policies.entries > 0 and configuration.labels.entries > 0:
+                            break
+                    finally:
+                        status.close()
+            except (httpx.HTTPError, ValueError, KeyError):
+                pass
+            time.sleep(0.2)
+        else:
+            pytest.fail("policy-server did not load both policy and label fixtures in time")
+        yield
+    finally:
+        _ = subprocess.call([*compose, "down"], timeout=30)
 
 
 def test_current_server_surfaces(client: TreeTopClient):

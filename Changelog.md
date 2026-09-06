@@ -26,6 +26,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Migrate label fixtures to declared resource-type/attribute targets and bundle
   format 2. Rebuild and re-sign archives; see [MIGRATION.md](MIGRATION.md).
 
+### Verification
+
+- Require a healthy pinned HTTP fixture before REST starts; wait for both policy
+  and label loading, fail setup errors, and always clean up integration containers.
+
 ### Performance
 
 - Reuse immutable policy versions in a bounded 256-entry cache keyed by all four

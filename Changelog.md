@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Refresh Python dependencies and the uv lockfile, including basedpyright 1.40.1,
+  pyright 1.1.414, hatchling 1.32.3, and current transitive releases.
+- Update setup-uv and CodSpeed to their current immutable release commits.
+
 ## [0.1.0] - 2026-09-06
 
 ### Breaking changes

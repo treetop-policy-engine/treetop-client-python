@@ -10,15 +10,15 @@ dependencies = ["httpx>=0.28.1,<0.29.0"]
 
 [project.optional-dependencies]
 dev = [
-    "basedpyright>=1.39.10",
-    "pyright>=1.1.411",
+    "basedpyright>=1.1.414",
+    "pyright>=1.1.414",
     "pytest>=9.1.1",
     "pytest-codspeed>=5.0.3",
     "pytest-httpx>=0.36.2",
 ]
 
 [build-system]
-requires = ["hatchling>=1.32.0"]
+requires = ["hatchling>=1.32.3"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]

@@ -22,7 +22,7 @@ pytestmark = pytest.mark.integration
 
 PORT = 10101
 NAMESPACE = ["DNS"]
-SERVER_VERSION = os.environ.get("TREETOP_REST_VERSION", "v0.1.0")
+SERVER_VERSION = os.environ.get("TREETOP_REST_VERSION", "v0.2.0")
 
 
 def make_host_resource(

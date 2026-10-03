@@ -13,7 +13,7 @@ Python ≥ 3.12, zero runtime deps beyond HTTPX.
 - **Full Async Support**: Async/await support for all API methods
 - **Type Safe**: Fully type-hinted dataclasses for requests and responses
 - **Version Tracking**: Access policy version information (hash and loaded_at timestamp)
-- **Treetop REST 0.1.0**: One strict contract with complete state versions and operational metadata.
+- **Treetop REST 0.2.0**: One strict contract with complete state versions and operational metadata.
   This is a breaking release; see [MIGRATION.md](MIGRATION.md).
 - **Request Context**: Pass request-scoped Cedar context attributes during authorization
 

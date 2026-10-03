@@ -7,10 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-10-03
+
 ### Changed
 
+- Verify the current JSON contract against REST 0.2.0 with Core/Bundle 0.3.0.
+  No Python API or response-shape migration is required.
+
 - Refresh Python dependencies and the uv lockfile, including basedpyright 1.40.1,
-  pyright 1.1.414, hatchling 1.32.3, and current transitive releases.
+  pyright 1.1.414, hatchling 1.32.4, and current transitive releases.
 - Update setup-uv and CodSpeed to their current immutable release commits.
 
 ## [0.1.0] - 2026-09-06

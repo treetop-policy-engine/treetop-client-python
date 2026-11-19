@@ -1,6 +1,6 @@
 services:
   integration-test-cedar-server:
-    image: docker.io/library/python@sha256:78e98729f8fc4099e53cffb3fe59fd15b18dfa4ace8c914dee0cefa5320068eb # 3.12-alpine
+    image: docker.io/library/python@sha256:c5ba3deef00c7758561a0f03c26f44f10589263d40e732b8748e0d1f38f6dd89 # 3.12-alpine
     volumes:
       - ./testdata:/data:ro,Z
     command: ["python", "-m", "http.server", "18999", "--directory", "/data"]

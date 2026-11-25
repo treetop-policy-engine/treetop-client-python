@@ -11,7 +11,7 @@ services:
       retries: 30
 
   integration-test-treetop-server:
-    image: ${TREETOP_REST_IMAGE:-ghcr.io/treetop-policy-engine/treetop-rest:v0.2.0}
+    image: ${TREETOP_REST_IMAGE:-ghcr.io/treetop-policy-engine/treetop-rest@sha256:69d8cde73510f0219a0359f5baa5cf049f98b8eab87148540e72ac385725c772}
     container_name: integration-test-treetop-server
     pull_policy: "missing"
     ports:

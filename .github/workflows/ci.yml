@@ -6,6 +6,9 @@ on:
     branches: [ main ]
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
   tests:
     runs-on: ubuntu-latest
@@ -41,8 +44,8 @@ jobs:
       - name: Run pytest
         run: |
           if [ "${{ matrix.integration }}" = "true" ]; then
-            export TREETOP_REST_VERSION=v0.2.0
-            export TREETOP_REST_IMAGE=ghcr.io/treetop-policy-engine/treetop-rest@sha256:e29baeb5b498f21c72dccd9d08ab43198fa4705cecb40643d0ee97b63cc1c932
+            export TREETOP_REST_VERSION=v0.3.0
+            export TREETOP_REST_IMAGE=ghcr.io/treetop-policy-engine/treetop-rest@sha256:69d8cde73510f0219a0359f5baa5cf049f98b8eab87148540e72ac385725c772
             docker compose -f docker-compose.integration.yml pull
             uv run pytest -m integration
           else

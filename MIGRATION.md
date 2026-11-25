@@ -1,5 +1,11 @@
 # Migration guide
 
+## Python 0.1.2 with REST 0.3.0
+
+Install `treetop-client==0.1.2` with Python 3.12 or later. The current
+integration suite runs against the REST 0.3.0 release image. Rebuild and re-sign
+policy archives with Bundle CLI 0.4.0 before upgrading the server.
+
 ## Python 0.1.1 with REST 0.2.0
 
 Upgrade with `pip install --upgrade treetop-client==0.1.1`. Python 3.12 remains

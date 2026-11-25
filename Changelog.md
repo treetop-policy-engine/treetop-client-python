@@ -7,8 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.2] - 2026-11-25
+
 ### Changed
 
+- Verify the SDK against the immutable REST 0.3.0 release image.
 - Refresh the locked CA certificate bundle to certifi 2026.11.20.
 
 ## [0.1.1] - 2026-10-03
